@@ -44,6 +44,16 @@ export function mountLayout(root: HTMLElement): void {
       <div class="setting-row"><div><strong>Vault</strong><p id="settings-storage"></p></div>${button("storage", "vault-capacity", t("查看容量", "View storage"))}</div>`],
     ["about", t("关于", "About"), `
       <div class="setting-row"><strong>Nasti</strong><span>${appVersion} · GPL-3.0-or-later</span></div>
+      <div class="setting-row settings-update" id="settings-update" hidden>
+        <div>
+          <strong>${t("软件更新", "Software update")}</strong>
+          <p id="settings-update-status" role="status" aria-atomic="true"></p>
+        </div>
+        <div class="settings-update-controls" id="settings-update-controls">
+          <button type="button" class="text-button" id="settings-update-check">${t("检查更新", "Check for updates")}</button>
+          <button type="button" class="text-button" id="settings-update-install" hidden>${t("更新并重启", "Update &amp; restart")}</button>
+        </div>
+      </div>
       <div class="setting-row about-links"><strong>${t("许可与素材", "Licenses and assets")}</strong><div>
         <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener noreferrer">${t("应用许可", "App license")}</a>
         <a href="https://github.com/LBEILC/RhineLabUI" target="_blank" rel="noopener noreferrer">RhineLabUI</a>

@@ -1,3 +1,4 @@
+use crate::runtime_storage::{same_volume, OAUTH_PENDING};
 use crate::ui_locale::Language;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -26,6 +27,7 @@ pub(crate) struct YoutubeOAuth {
     api_origin: Url,
     config: Option<DesktopClient>,
     client_file: PathBuf,
+    staging_dir: PathBuf,
     use_system_keychain: bool,
     restored_grant: bool,
     refresh_token: Option<String>,
@@ -65,7 +67,11 @@ struct OAuthError {
 }
 
 impl YoutubeOAuth {
-    pub(crate) fn new(use_system_keychain: bool, client_file: &Path) -> Result<Self, String> {
+    pub(crate) fn new(
+        use_system_keychain: bool,
+        client_file: &Path,
+        staging_dir: &Path,
+    ) -> Result<Self, String> {
         let config = DesktopClient::load(client_file)?;
         let client = Client::builder()
             .https_only(true)
@@ -79,6 +85,7 @@ impl YoutubeOAuth {
             api_origin: Url::parse(OAUTH_API_ORIGIN).expect("constant Google OAuth origin"),
             config,
             client_file: client_file.to_owned(),
+            staging_dir: staging_dir.to_owned(),
             use_system_keychain: use_system_keychain && cfg!(target_os = "macos"),
             restored_grant: false,
             refresh_token: None,
@@ -99,18 +106,24 @@ impl YoutubeOAuth {
             .client_file
             .parent()
             .ok_or("无法保存 Google 桌面 OAuth 客户端 JSON")?;
+        if !same_volume(directory, &self.staging_dir).unwrap_or(false) {
+            return Err("无法保存 Google 桌面 OAuth 客户端 JSON".into());
+        }
+        let settings = serde_json::to_vec(&serde_json::json!({
+            "installed": {"client_id": &client.id, "client_secret": &client.secret}
+        }))
+        .map_err(|_| "无法保存 Google 桌面 OAuth 客户端 JSON".to_owned())?;
+        if settings.len() as u64 > CLIENT_FILE_LIMIT {
+            return Err("Google 桌面 OAuth 客户端 JSON 文件过大".into());
+        }
         // Publish the complete private file only if the destination still does not exist.
         let mut pending = tempfile::Builder::new()
-            .prefix(".nasti-oauth-")
-            .tempfile_in(directory)
-            .map_err(|_| "无法保存 Google 桌面 OAuth 客户端 JSON".to_owned())?;
-        let settings = serde_json::json!({
-            "installed": {"client_id": &client.id, "client_secret": &client.secret}
-        });
-        serde_json::to_writer(&mut pending, &settings)
+            .prefix(OAUTH_PENDING)
+            .rand_bytes(0)
+            .tempfile_in(&self.staging_dir)
             .map_err(|_| "无法保存 Google 桌面 OAuth 客户端 JSON".to_owned())?;
         pending
-            .flush()
+            .write_all(&settings)
             .and_then(|_| pending.as_file().sync_all())
             .map_err(|_| "无法保存 Google 桌面 OAuth 客户端 JSON".to_owned())?;
         pending
@@ -650,6 +663,7 @@ mod tests {
                 secret: Some("desktop-secret".into()),
             }),
             client_file: PathBuf::new(),
+            staging_dir: PathBuf::new(),
             use_system_keychain: false,
             restored_grant: false,
             refresh_token: None,
@@ -767,6 +781,8 @@ mod tests {
         let (mut oauth, server) = mock_google(Vec::new()).await;
         oauth.config = None;
         oauth.client_file = path.clone();
+        oauth.staging_dir = directory.path().join("staging");
+        std::fs::create_dir(&oauth.staging_dir).unwrap();
         assert!(oauth.access_token().await.unwrap().is_none());
 
         let web_client = r#"{"web":{"client_id":"synthetic-web-client"}}"#;
@@ -799,7 +815,7 @@ mod tests {
             let mode = std::fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
-        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        assert_eq!(std::fs::read_dir(&oauth.staging_dir).unwrap().count(), 0);
         assert!(server.await.unwrap().is_empty());
     }
 

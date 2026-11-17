@@ -2,6 +2,7 @@ use crate::models::{
     ArchiveSearchResult, LyricLine, MediaMode, PlaylistColumn, PlaylistImportPreview,
     PlaylistRemoval, SearchResults, StorageStats, TrackItem, VaultItem,
 };
+use crate::runtime_storage::RuntimeStorage;
 use convallis_pipe::{ArchiveMedia, MediaPipe, MediaSource, PlaybackSource, Vault};
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
@@ -42,8 +43,9 @@ pub(crate) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
     } else {
         dev
     };
-    let data = match std::env::var_os("NASTI_DATA_DIR") {
-        Some(path) if !path.is_empty() => PathBuf::from(path),
+    let isolated_data = std::env::var_os("NASTI_DATA_DIR").filter(|path| !path.is_empty());
+    let data = match isolated_data.as_ref() {
+        Some(path) => PathBuf::from(path),
         _ => app.path().app_data_dir()?,
     };
     std::fs::create_dir_all(&data)?;
@@ -57,9 +59,18 @@ pub(crate) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
         .try_lock()
         .map_err(|_| "曲库正在另一个 Nasti 窗口中使用")?;
 
+    let runtime_base = if isolated_data.is_some() {
+        data.clone()
+    } else {
+        app.path().home_dir()?
+    };
+    let runtime = RuntimeStorage::open(&runtime_base, &app.config().identifier)?;
     let catalog = Arc::new(Catalog::load(&root)?);
     let archive = ArchiveCatalog::new()?;
-    let vault = Arc::new(Vault::open(data.join("vault"))?);
+    let vault = Arc::new(Vault::open_with_staging(
+        data.join("vault"),
+        runtime.vault_dir.clone(),
+    )?);
     let sources = catalog
         .tracks()
         .map(
@@ -82,13 +93,14 @@ pub(crate) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
         let pipe = MediaPipe::start(sources, Arc::clone(&vault)).await?;
         Ok::<_, Box<dyn std::error::Error>>((library, pipe))
     })?;
-    let use_system_keychain = std::env::var_os("NASTI_DATA_DIR").is_none_or(|path| path.is_empty());
     app.manage(crate::youtube_commands::YoutubeService(
         crate::youtube_commands::YoutubeServices::new(
-            use_system_keychain,
+            isolated_data.is_none(),
             &data.join("youtube-oauth-client.json"),
+            &runtime.oauth_dir,
         ),
     ));
+    app.manage(runtime);
     app.manage(MediaServices {
         catalog,
         archive,

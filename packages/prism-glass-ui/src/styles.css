@@ -534,6 +534,13 @@ svg { display: block; width: 1em; height: 1em; }
 .settings-scroll .setting-row { min-height: 40px; gap: 8px; }
 .settings-scroll .setting-row > strong, .settings-scroll .setting-row label { min-width: 0; color: var(--foreground); }
 .settings-scroll .setting-row p { color: var(--secondary); font-size: var(--text-meta); margin-top: 2px; }
+.settings-update { flex-wrap: wrap; }
+.settings-update-controls { display: flex; flex-wrap: wrap; gap: 6px; }
+.settings-update-controls .text-button[aria-disabled="true"] {
+  opacity: .55;
+  cursor: default;
+  background: var(--hover);
+}
 .settings-scroll select, .text-button {
   min-height: 33px;
   padding: 5px 11px;

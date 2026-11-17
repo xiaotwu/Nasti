@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Nasti",
-  "version": "0.1.1-beta.1",
+  "version": "0.1.2-beta.1",
   "identifier": "dev.nasti.terminal.beta",
   "build": {
     "beforeDevCommand": {
@@ -60,6 +60,13 @@
     },
     "macOS": {
       "minimumSystemVersion": "12.0"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4NzVCODlDOTFGQjg3NEIKUldSTGgvdVJuTGgxeUFMZmc5V3lobmpIbTJoYUhWOEhzVkQwZ3MveDJ6TjJXRGJkMEFWcVdJWGcK",
+      "requireSignedVersion": true,
+      "allowDowngrades": false
     }
   }
 }

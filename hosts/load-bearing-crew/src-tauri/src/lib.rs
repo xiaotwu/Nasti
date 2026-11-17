@@ -1,7 +1,11 @@
 //! Load-Bearing Crew (应急承重小组) — Unified macOS & Windows 11 Tauri v2 Host
 
+mod app_update;
+#[cfg(target_os = "macos")]
+mod app_update_install;
 mod catalog_commands;
 mod playback;
+mod runtime_storage;
 mod ui_locale;
 mod youtube_commands;
 mod youtube_oauth;
@@ -9,7 +13,12 @@ mod youtube_oauth;
 pub use uraniborg_core::models;
 
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(app_update::AppUpdater::default());
+    builder
         .setup(catalog_commands::setup)
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
@@ -17,6 +26,8 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            app_update::app_update_check,
+            app_update::app_update_install,
             ui_locale::ui_set_language,
             catalog_commands::catalog_fetch_columns,
             catalog_commands::catalog_import_playlist_url,

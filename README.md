@@ -116,3 +116,5 @@ Download the Apple Silicon macOS prerelease from [GitHub Releases](https://githu
 From the empty home screen, open the licensed catalog, import a playlist, or open YouTube Music. To use YouTube Music, enable the YouTube Data API v3, download a Desktop app OAuth client JSON from Google Cloud, select it in Nasti, and connect your account. The configuration stays on your Mac.
 
 Build with Node, pnpm 11, Rust and Xcode. Run `pnpm install --frozen-lockfile` and then `pnpm --dir hosts/load-bearing-crew exec tauri build --bundles app`. See the [release fidelity specification](docs/RELEASE_FIDELITY_SPEC.md) and [third-party notices](NOTICE.md).
+
+Desktop updates and cache paths are documented in [native storage and releases](docs/NATIVE_STORAGE.md). 应用内更新和缓存目录见[桌面版更新与存储](docs/NATIVE_STORAGE.md)。

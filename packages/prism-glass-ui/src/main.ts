@@ -13,7 +13,7 @@ import { installGlassMotion } from "./materials/glass";
 import { OutputPicker } from "./output-picker";
 import { initialPlayback, openTerminal, setDesktopLanguage, type TerminalConnection } from "./playback";
 import { PlaylistEditor } from "./playlist-editor";
-import { SettingsNavigation } from "./settings";
+import { SettingsNavigation, SettingsUpdates } from "./settings";
 import { type ShortcutAction } from "./shortcut-bindings";
 import { ApplicationShortcuts } from "./shortcuts";
 import { nextRepeatMode, occurrenceId, repeatMode, TrackNavigation } from "./track-navigation";
@@ -158,6 +158,7 @@ class Terminal {
       this.navigation = restored.navigation;
     }
     this.ipc = connection.ipc;
+    if (connection.updater) new SettingsUpdates(connection.updater, this.events.signal);
     this.outputs = new OutputPicker(this.ipc, this.events.signal);
     this.youtube = connection.youtube ? new YoutubePanel(connection.youtube, this.events.signal) : null;
     this.library = new LibraryPanels(this.ipc, () => this.reloadCatalog(),

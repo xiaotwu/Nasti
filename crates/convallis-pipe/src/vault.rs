@@ -2,7 +2,7 @@ use crate::archive_media::{ArchiveHttp, ArchiveMedia, ArchiveMediaError};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 use tokio::io::AsyncWriteExt;
@@ -32,6 +32,8 @@ pub enum VaultError {
     LimitBelowUsage,
     #[error("Vault 暂时不可用，请重启应用")]
     Busy,
+    #[error("Vault 临时目录与离线储藏库不在同一卷，无法安全写入")]
+    StagingVolume,
     #[error(transparent)]
     Archive(#[from] ArchiveMediaError),
     #[error("下载的大小或校验和与授权曲目记录不符")]
@@ -40,6 +42,8 @@ pub enum VaultError {
 
 pub struct Vault {
     root: PathBuf,
+    staging: PathBuf,
+    staging_is_atomic: bool,
     write_lock: Mutex<()>,
     playing_copies: StdMutex<HashMap<String, Weak<VaultCopy>>>,
 }
@@ -88,22 +92,51 @@ impl Vault {
     pub fn open(root: PathBuf) -> Result<Self, VaultError> {
         fs::create_dir_all(&root)?;
         let root = root.canonicalize()?;
-        for entry in fs::read_dir(&root)? {
-            let entry = entry?;
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name.strip_prefix(".pending-").is_some_and(valid_media_id)
-                || name.strip_prefix(".removed-").is_some_and(valid_media_id)
-            {
-                if entry.file_type()?.is_dir() {
-                    fs::remove_dir_all(entry.path())?;
-                }
-            } else if name == LIMIT_PENDING && entry.file_type()?.is_file() {
-                fs::remove_file(entry.path())?;
-            }
+        Self::open_directories(root.clone(), root, true)
+    }
+
+    /// Open a Vault with a private staging directory.
+    ///
+    /// The caller must hold the library lock before opening either location.
+    pub fn open_with_staging(root: PathBuf, staging: PathBuf) -> Result<Self, VaultError> {
+        fs::create_dir_all(&root)?;
+        let root = root.canonicalize()?;
+        if !fs::symlink_metadata(&staging)?.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Vault staging must be a directory",
+            )
+            .into());
+        }
+        let staging = staging.canonicalize()?;
+        if staging.starts_with(&root) || root.starts_with(&staging) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Vault staging and offline storage must be separate directories",
+            )
+            .into());
+        }
+        // On an unusual cross-volume layout, existing copies must remain
+        // available to play. Reject writes that cannot be committed atomically.
+        let staging_is_atomic = same_volume(&root, &staging)?;
+        Self::open_directories(root, staging, staging_is_atomic)
+    }
+
+    fn open_directories(
+        root: PathBuf,
+        staging: PathBuf,
+        staging_is_atomic: bool,
+    ) -> Result<Self, VaultError> {
+        // A prior version staged within the Vault. Clean those same owned names
+        // on upgrade, while leaving finalized media and limit settings in place.
+        recover_staging(&root)?;
+        if staging != root {
+            recover_staging(&staging)?;
         }
         Ok(Self {
             root,
+            staging,
+            staging_is_atomic,
             write_lock: Mutex::new(()),
             playing_copies: StdMutex::new(HashMap::new()),
         })
@@ -150,7 +183,8 @@ impl Vault {
         if limit < self.read_stats()?.0 {
             return Err(VaultError::LimitBelowUsage);
         }
-        let staged = self.root.join(LIMIT_PENDING);
+        self.require_atomic_staging()?;
+        let staged = self.staging.join(LIMIT_PENDING);
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -159,7 +193,7 @@ impl Vault {
             writeln!(file, "{limit}")?;
             file.sync_all()?;
             fs::rename(&staged, self.root.join(LIMIT))?;
-            sync_directory(&self.root)
+            self.sync_commit()
         })();
         if result.is_err() && staged.exists() {
             fs::remove_file(staged)?;
@@ -175,6 +209,7 @@ impl Vault {
         if !audio_needed && video_needed.is_none() {
             return Ok(());
         }
+        self.require_atomic_staging()?;
         let audio_length = if audio_needed {
             fs::metadata(audio)?.len()
         } else {
@@ -193,7 +228,7 @@ impl Vault {
             return Err(VaultError::Full);
         }
 
-        let stage = self.root.join(format!(".pending-{id}"));
+        let stage = self.staging.join(format!(".pending-{id}"));
         fs::create_dir(&stage)?;
         let result = (|| -> io::Result<()> {
             if audio_needed {
@@ -209,7 +244,7 @@ impl Vault {
                 fs::rename(stage.join(VIDEO), dir.join(VIDEO))?;
                 sync_directory(&dir)?;
             }
-            sync_directory(&self.root)
+            self.sync_commit()
         })();
         if stage.exists() {
             fs::remove_dir_all(&stage)?;
@@ -228,12 +263,13 @@ impl Vault {
         if self.path(id, "audio").is_some() {
             return Ok(());
         }
+        self.require_atomic_staging()?;
         let (used, limit, _) = self.read_stats()?;
         if used.saturating_add(media.size) > limit {
             return Err(VaultError::Full);
         }
 
-        let stage = self.root.join(format!(".pending-{id}"));
+        let stage = self.staging.join(format!(".pending-{id}"));
         tokio::fs::create_dir(&stage).await?;
         let result = self.save_archive(&stage, &dir, media, http).await;
         if result.is_err() && stage.exists() {
@@ -272,7 +308,7 @@ impl Vault {
         drop(output);
         sync_directory(stage)?;
         tokio::fs::rename(stage, dest).await?;
-        sync_directory(&self.root)?;
+        self.sync_commit()?;
         Ok(())
     }
 
@@ -290,10 +326,11 @@ impl Vault {
         if self.path(id, "audio").is_none() {
             return Ok(false);
         }
+        self.require_atomic_staging()?;
         retain_playing_copy()?;
         let mut playing = self.playing_copies.lock().map_err(|_| VaultError::Busy)?;
         let removed = self
-            .root
+            .staging
             .join(format!(".removed-{}", Uuid::new_v4().simple()));
         let playing_copy = playing.get(id).and_then(Weak::upgrade);
         if let Some(copy) = playing_copy {
@@ -308,8 +345,23 @@ impl Vault {
             fs::remove_dir_all(&removed)?;
         }
         playing.remove(id);
-        sync_directory(&self.root)?;
+        self.sync_commit()?;
         Ok(true)
+    }
+
+    fn sync_commit(&self) -> io::Result<()> {
+        sync_directory(&self.root)?;
+        if self.root != self.staging {
+            sync_directory(&self.staging)?;
+        }
+        Ok(())
+    }
+
+    fn require_atomic_staging(&self) -> Result<(), VaultError> {
+        if !self.staging_is_atomic {
+            return Err(VaultError::StagingVolume);
+        }
+        Ok(())
     }
 
     fn track_dir(&self, id: &str) -> Result<PathBuf, VaultError> {
@@ -333,44 +385,91 @@ impl Vault {
     }
 
     fn scan(&self) -> Result<(u64, Vec<(String, u64)>), VaultError> {
-        let mut used = 0u64;
         let mut items = Vec::new();
-        for entry in fs::read_dir(&self.root)? {
-            let entry = entry?;
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if !entry.file_type()?.is_dir() {
-                continue;
-            }
-            // Include unfinished owned data in the byte budget too.
-            let active = valid_media_id(&name);
-            let managed = active
-                || name.strip_prefix(".pending-").is_some_and(valid_media_id)
-                || name.strip_prefix(".removed-").is_some_and(valid_media_id);
-            if !managed {
-                continue;
-            }
-            let mut has_audio = false;
-            let mut bytes = 0u64;
-            for file in [AUDIO, MP3, VIDEO] {
-                match fs::symlink_metadata(entry.path().join(file)) {
-                    Ok(meta) if meta.is_file() => {
-                        bytes = bytes.saturating_add(meta.len());
-                        has_audio |= file != VIDEO;
-                    }
-                    Ok(_) => {}
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error.into()),
-                }
-            }
-            if active && has_audio {
-                items.push((name.into_owned(), bytes));
-            }
-            used = used.saturating_add(bytes);
+        let mut used = scan_media(&self.root, Some(&mut items))?;
+        if self.root != self.staging {
+            used = used.saturating_add(scan_media(&self.staging, None)?);
         }
         items.sort_unstable_by(|first, second| first.0.cmp(&second.0));
         Ok((used, items))
     }
+}
+
+#[cfg(unix)]
+fn same_volume(root: &Path, staging: &Path) -> io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(fs::metadata(root)?.dev() == fs::metadata(staging)?.dev())
+}
+
+#[cfg(windows)]
+fn same_volume(root: &Path, staging: &Path) -> io::Result<bool> {
+    // Canonicalized paths expose distinct drive/UNC prefixes. Rename still
+    // checks the volume for rarer mounted volumes within one drive.
+    Ok(root.components().next() == staging.components().next())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn same_volume(_: &Path, _: &Path) -> io::Result<bool> {
+    Ok(true)
+}
+
+fn is_staged_media(name: &str) -> bool {
+    name.strip_prefix(".pending-").is_some_and(valid_media_id)
+        || name.strip_prefix(".removed-").is_some_and(|id| {
+            id.len() == 32
+                && id
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        })
+}
+
+fn recover_staging(directory: &Path) -> io::Result<()> {
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let kind = entry.file_type()?;
+        if is_staged_media(&name) && kind.is_dir() {
+            fs::remove_dir_all(entry.path())?;
+        } else if name == LIMIT_PENDING && kind.is_file() {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+fn scan_media(directory: &Path, mut items: Option<&mut Vec<(String, u64)>>) -> io::Result<u64> {
+    let mut used = 0u64;
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let active = items.is_some() && valid_media_id(&name);
+        if !active && !is_staged_media(&name) {
+            continue;
+        }
+        let mut has_audio = false;
+        let mut bytes = 0u64;
+        for file in [AUDIO, MP3, VIDEO] {
+            match fs::symlink_metadata(entry.path().join(file)) {
+                Ok(meta) if meta.is_file() => {
+                    bytes = bytes.saturating_add(meta.len());
+                    has_audio |= file != VIDEO;
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        if let Some(items) = items.as_deref_mut().filter(|_| active && has_audio) {
+            items.push((name.into_owned(), bytes));
+        }
+        used = used.saturating_add(bytes);
+    }
+    Ok(used)
 }
 
 fn media_name(dir: &Path, mode: &str) -> Option<&'static str> {
@@ -397,14 +496,17 @@ pub(crate) fn valid_media_id(id: &str) -> bool {
 }
 
 fn copy_exact(source: &Path, dest: &Path, length: u64) -> io::Result<()> {
-    let copied = fs::copy(source, dest)?;
-    if copied != length {
+    let mut input = File::open(source)?;
+    let mut output = OpenOptions::new().create_new(true).write(true).open(dest)?;
+    // A source that grows after its size has been reserved cannot exceed the quota.
+    let copied = io::copy(&mut (&mut input).take(length), &mut output)?;
+    if copied != length || input.read(&mut [0; 1])? != 0 {
         return Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
             "Media size changed during copy",
         ));
     }
-    File::open(dest)?.sync_all()
+    output.sync_all()
 }
 
 #[cfg(unix)]
@@ -420,6 +522,84 @@ fn sync_directory(_: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relocated_staging_counts_leases_and_recovers_only_owned_scratch() {
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path().join("vault");
+        let staging = scratch.path().join("tmp").join("vault");
+        let audio = scratch.path().join("audio-fixture");
+        fs::write(&audio, [1; 16]).unwrap();
+        fs::create_dir_all(root.join(".pending-legacy")).unwrap();
+        fs::create_dir_all(staging.join(".pending-abandoned")).unwrap();
+        fs::create_dir(staging.join(".removed-keep")).unwrap();
+        fs::write(staging.join(LIMIT_PENDING), "abandoned").unwrap();
+
+        let vault = Vault::open_with_staging(root.clone(), staging.clone()).unwrap();
+        assert!(!root.join(".pending-legacy").exists());
+        assert!(!staging.join(".pending-abandoned").exists());
+        assert!(!staging.join(LIMIT_PENDING).exists());
+        assert!(staging.join(".removed-keep").exists());
+        vault.set_limit(16).unwrap();
+        vault.download("alpha", &audio, None).unwrap();
+        let lease = vault.playback_file("alpha", "audio").unwrap();
+
+        assert!(vault.remove("alpha").unwrap());
+        assert!(!root.join("alpha").exists());
+        assert_eq!(vault.stats().unwrap(), (16, 16, 0));
+        assert!(matches!(
+            vault.download("beta", &audio, None),
+            Err(VaultError::Full)
+        ));
+        assert!(fs::read_dir(&staging)
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|entry| is_staged_media(&entry.file_name().to_string_lossy())));
+        let mut leased_bytes = Vec::new();
+        lease
+            .open()
+            .unwrap()
+            .read_to_end(&mut leased_bytes)
+            .unwrap();
+        assert_eq!(leased_bytes, [1; 16]);
+
+        drop(lease);
+        assert_eq!(vault.stats().unwrap(), (0, 16, 0));
+        vault.download("beta", &audio, None).unwrap();
+        assert!(root.join("beta").join(AUDIO).is_file());
+    }
+
+    #[test]
+    fn read_only_vault_on_an_incompatible_volume_keeps_final_media() {
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path().join("vault");
+        let staging = scratch.path().join("tmp");
+        fs::create_dir_all(root.join("alpha")).unwrap();
+        fs::create_dir(&staging).unwrap();
+        fs::write(root.join("alpha").join(AUDIO), [1; 16]).unwrap();
+        let vault = Vault::open_directories(root.clone(), staging.clone(), false).unwrap();
+
+        assert!(vault
+            .playback_file("alpha", "audio")
+            .unwrap()
+            .open()
+            .is_ok());
+        assert_eq!(vault.stats().unwrap(), (16, DEFAULT_LIMIT, 1));
+        assert!(matches!(
+            vault.remove("alpha"),
+            Err(VaultError::StagingVolume)
+        ));
+        assert!(matches!(
+            vault.set_limit(32),
+            Err(VaultError::StagingVolume)
+        ));
+        assert!(matches!(
+            vault.download("beta", &root.join("alpha").join(AUDIO), None),
+            Err(VaultError::StagingVolume)
+        ));
+        assert!(root.join("alpha").join(AUDIO).exists());
+        assert_eq!(fs::read_dir(&staging).unwrap().count(), 0);
+    }
 
     #[test]
     fn vault_enforces_total_cap_and_can_upgrade_an_existing_audio_copy() {
