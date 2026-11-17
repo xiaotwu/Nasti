@@ -51,13 +51,13 @@
 <p>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/media/readme/playback-and-playlist-dark.jpg">
-    <img src="docs/media/readme/playback-and-playlist-light.jpg" width="836" alt="Playback detail showing cover art and synchronized lyrics">
+    <img src="docs/media/readme/playback-and-playlist-light.jpg" width="836" alt="Playback detail showing the official cover of 酸橙色信箋 and its highlighted entry in the playlist">
   </picture>
 </p>
 
 <p>
-  Open a track to see its cover art and follow the lyrics in sync.<br>
-  <span lang="zh-CN">打开歌曲档案，看唱片封面，跟着播放进度读歌词。</span>
+  The playback detail shows the official cover and highlights <em lang="zh-CN">酸橙色信箋</em>, the fifth track in the original playlist.<br>
+  <span lang="zh-CN">播放详情展示官方封面，并在原歌单曲序中高亮第 5 首《酸橙色信笺》。</span>
 </p>
 
 <p>
