@@ -83,6 +83,13 @@ impl Catalog {
             }
         }
 
+        let is_empty_release = tracks.is_empty()
+            && manifest.playlists.is_empty()
+            && manifest.lyrics.is_empty();
+        if !is_empty_release && (tracks.is_empty() || manifest.playlists.is_empty()) {
+            return Err(CatalogError::Invalid("目录为空".into()));
+        }
+
         Ok(Self {
             root,
             tracks,

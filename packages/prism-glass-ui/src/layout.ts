@@ -1,3 +1,4 @@
+import { version as appVersion } from "../package.json";
 import { button, icon, type IconName } from "./icons";
 import { glassFilters } from "./materials/glass";
 import { t } from "./i18n";
@@ -42,7 +43,7 @@ export function mountLayout(root: HTMLElement): void {
       <div class="setting-row" data-youtube-entry hidden><strong>YouTube Music</strong>${button("music", "youtube-playlists", t("管理 YouTube Music 歌单", "Manage YouTube Music playlists"))}</div>
       <div class="setting-row"><div><strong>Vault</strong><p id="settings-storage"></p></div>${button("storage", "vault-capacity", t("查看容量", "View storage"))}</div>`],
     ["about", t("关于", "About"), `
-      <div class="setting-row"><strong>Nasti</strong><span>0.1.0 · GPL-3.0-or-later</span></div>
+      <div class="setting-row"><strong>Nasti</strong><span>${appVersion} · GPL-3.0-or-later</span></div>
       <div class="setting-row about-links"><strong>${t("许可与素材", "Licenses and assets")}</strong><div>
         <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener noreferrer">${t("应用许可", "App license")}</a>
         <a href="https://github.com/LBEILC/RhineLabUI" target="_blank" rel="noopener noreferrer">RhineLabUI</a>
