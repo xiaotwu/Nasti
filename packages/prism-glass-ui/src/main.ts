@@ -113,6 +113,7 @@ class Terminal {
   private searchSource: "local" | "archive" = "local";
   private power = storePreference("power") === "on";
   private panelTrigger: HTMLElement | null = null;
+  private libraryReady = false;
   private sceneReady = false;
   private sceneFailed = false;
   private blockSelections = false;
@@ -166,6 +167,9 @@ class Terminal {
       () => this.renderOverview(), value => this.message(value), this.events.signal);
     this.shell.dataset.native = String(!connection.inlineVideo);
     element("search-sources").hidden = Boolean(connection.inlineVideo);
+    for (const entry of this.shell.querySelectorAll<HTMLElement>("[data-archive-entry]")) {
+      entry.hidden = Boolean(connection.inlineVideo);
+    }
     for (const control of this.shell.querySelectorAll<HTMLElement>("[data-youtube-entry]")) {
       control.hidden = !this.youtube;
     }
@@ -206,13 +210,11 @@ class Terminal {
       this.scene.setQualityPreset(this.quality);
       this.syncSceneSelection();
       this.setMode(this.mode);
-      if (!reopenSettings && !this.panel.open && document.activeElement === document.body) this.focusArchive();
     }).catch(() => {
       if (this.closed) return;
       this.sceneFailed = true;
       this.shell.dataset.fallback = "true";
       if (this.mode !== "boot") this.setMode("radar-grid");
-      if (!reopenSettings && !this.panel.open && document.activeElement === document.body) this.focusArchive();
     });
     const loading = element("loading-status");
     const load = async () => {
@@ -221,6 +223,8 @@ class Terminal {
       try {
         await Promise.all([sceneInit, this.reloadCatalog()]);
         loading.hidden = true;
+        this.renderFirstUse();
+        if (!reopenSettings && !this.panel.open && document.activeElement === document.body) this.focusArchive();
       } catch {
         const retry = actionButton("restart", "retry-library", t("重新打开曲库", "Retry opening the library"));
         retry.onclick = () => void load();
@@ -384,6 +388,9 @@ class Terminal {
   private async handleAction(button: HTMLButtonElement): Promise<void> {
     switch (button.dataset.action) {
       case "search": return this.showPanel("search");
+      case "browse-archive":
+        this.setSearchSource("archive");
+        return this.showPanel("search");
       case "library": case "vault-drawer": return this.showPanel("library");
       case "import-playlist": return this.showPanel("import");
       case "youtube-playlists": if (this.youtube) return this.showPanel("youtube"); return;
@@ -632,6 +639,7 @@ class Terminal {
     if (this.closed) return;
     const old = this.inspected;
     this.columns = columns;
+    this.libraryReady = true;
     const oldList = this.columns.find(column => column.playlistId === old?.column.playlistId);
     const next = this.locatePosition(old && position(old))
       ?? this.locate(oldList?.playlistId, Math.min(old?.index ?? 0, (oldList?.tracks.length ?? 0) - 1))
@@ -650,7 +658,7 @@ class Terminal {
   }
 
   private syncSceneSelection(): void {
-    if (!this.sceneReady) return;
+    if (!this.sceneReady || !this.libraryReady) return;
     this.blockSelections = true;
     this.scene.setColumns(this.columns);
     if (this.inspected && (this.mode === "archive-array" || this.mode === "detail-extracted")) {
@@ -703,6 +711,7 @@ class Terminal {
     }
     this.shell.dataset.mode = next;
     element("radar").hidden = next !== "radar-grid";
+    this.renderFirstUse();
     element("scene-caption").hidden = next !== "archive-array" || !this.inspected;
     element("archive-navigation").hidden = next !== "archive-array" || !this.inspected;
     const detailHidden = next !== "detail-extracted" || !this.inspected;
@@ -742,8 +751,17 @@ class Terminal {
     this.focusArchive();
   }
 
+  private renderFirstUse(): void {
+    const archiveVisible = this.mode === "archive-array" || (this.mode === "radar-grid" && this.sceneFailed);
+    element("first-use").hidden = !archiveVisible || !this.libraryReady || Boolean(this.inspected)
+      || !element("loading-status").hidden || this.panel.open;
+  }
+
   private focusArchive(): void {
-    if (this.sceneFailed) element("radar").querySelector("button")?.focus();
+    const firstUse = element("first-use");
+    if (!firstUse.hidden) {
+      firstUse.querySelector<HTMLButtonElement>("button:not([hidden])")?.focus();
+    } else if (this.sceneFailed) element("radar").querySelector("button")?.focus();
     else element("scene").querySelector<HTMLElement>("[tabindex]")?.focus();
   }
 
@@ -912,6 +930,7 @@ class Terminal {
     const titles = { search: t("检索曲库", "Search library"), library: t("离线储藏库", "Vault"), capacity: t("Vault 容量", "Vault storage"), import: t("导入歌单", "Import playlist"), settings: t("终端设置", "Settings"), youtube: "YouTube Music" };
     setText(element("panel-title"), titles[panel]);
     if (!this.panel.open) this.panel.show();
+    this.renderFirstUse();
     this.updatePower();
     if (panel === "search") {
       element("search-input").focus();
@@ -940,7 +959,9 @@ class Terminal {
     this.searchRequest++;
     this.panel.close();
     delete this.shell.dataset.panel;
-    this.panelTrigger?.focus({ preventScroll: true });
+    this.renderFirstUse();
+    if (this.panelTrigger?.closest("#first-use[hidden]")) this.focusArchive();
+    else this.panelTrigger?.focus({ preventScroll: true });
     this.panelTrigger = null;
     this.updatePower();
   }
@@ -952,6 +973,12 @@ class Terminal {
   }
 
   private changeSearchSource(source: "local" | "archive"): Promise<void> {
+    this.setSearchSource(source);
+    element("search-input").focus();
+    return this.search();
+  }
+
+  private setSearchSource(source: "local" | "archive"): void {
     const online = source === "archive";
     clearTimeout(this.searchTimer);
     this.searchSource = source;
@@ -962,8 +989,6 @@ class Terminal {
     setText(element("search-source-label"), online ? "Internet Archive · unfoundsound" : t("本地曲库", "Local library"));
     const input = element<HTMLInputElement>("search-input");
     input.placeholder = online ? t("搜索专辑、曲名、艺人或编号", "Search albums, tracks, artists, or release IDs") : t("搜索歌名、艺人或歌单", "Search tracks, artists, or playlists");
-    input.focus();
-    return this.search();
   }
 
   private async search(): Promise<void> {
@@ -972,6 +997,10 @@ class Terminal {
     const area = element("search-results");
     try {
       if (this.searchSource === "archive") {
+        if (!query) {
+          area.replaceChildren(empty(t("输入专辑、曲名、艺人或编号，查找可导入的授权发行。", "Search for a licensed release by album, track, artist, or release ID.")));
+          return;
+        }
         area.replaceChildren(empty(t("正在读取授权目录", "Reading licensed catalog…")));
         const result = await this.ipc.catalog_search_archive({ query });
         if (request !== this.searchRequest || !this.panel.open) return;

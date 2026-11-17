@@ -76,6 +76,8 @@ class Scene implements SkyframeScene {
   private hovered: ArchiveCell | null = null;
   private hoverPending = false;
   private columns: PlaylistColumn[] = [];
+  private libraryLoaded = false;
+  private hasPlayableColumns = false;
   private selected = origin();
   private pan = origin();
   private velocity = origin();
@@ -137,13 +139,11 @@ class Scene implements SkyframeScene {
       renderer.toneMappingExposure = 1.13;
       const canvas = renderer.domElement;
       canvas.className = "skyframe-canvas";
-      canvas.tabIndex = 0;
       canvas.style.display = "block";
       canvas.style.width = "100%";
       canvas.style.height = "100%";
       canvas.style.touchAction = "none";
       canvas.style.cursor = "grab";
-      canvas.setAttribute("aria-keyshortcuts", "ArrowLeft ArrowRight ArrowUp ArrowDown Enter");
 
       this.covers = new CoverImages();
       this.archive = new ArchiveRenderer(this.covers, this.theme, this.requestFrame);
@@ -211,6 +211,7 @@ class Scene implements SkyframeScene {
   setColumns(columns: PlaylistColumn[]) {
     const prior = trackAt(this.columns, this.selected);
     this.columns = archiveColumns(columns);
+    this.libraryLoaded = true;
     const activeLists = new Set(this.columns.map((column) => column.playlistId));
     for (const playlistId of this.remembered.keys()) {
       if (!activeLists.has(playlistId)) this.remembered.delete(playlistId);
@@ -218,6 +219,8 @@ class Scene implements SkyframeScene {
     this.archive?.updateColumns();
     const rememberedLane = this.columns.find((column) => column.playlistId === prior?.column.playlistId && column.tracks.length);
     const column = rememberedLane ?? this.columns.find((item) => item.tracks.length > 0);
+    const interactiveChanged = this.hasPlayableColumns !== Boolean(column);
+    this.hasPlayableColumns = Boolean(column);
     if (column) {
       const trackIndex = column.tracks.findIndex((track, index) => entryId(track, index) === prior?.entryId);
       const fallback = clamp(prior?.trackIndex ?? 0, 0, column.tracks.length - 1);
@@ -229,12 +232,15 @@ class Scene implements SkyframeScene {
     } else {
       this.selected = origin();
       this.pan = origin();
+      this.hovered = null;
+      this.hoverPending = false;
       if (extracted(this.mode)) this.changeMode("archive-array");
     }
     this.velocity = origin();
     this.armed = null;
     this.clearPointer();
     this.refreshTrack();
+    if (interactiveChanged) this.updateCanvasMode();
     this.publishSelection();
     this.requestFrame();
   }
@@ -400,8 +406,11 @@ class Scene implements SkyframeScene {
       const hidden = this.mode === "radar-grid" || this.mode === "boot";
       canvas.hidden = hidden;
       canvas.style.display = hidden ? "none" : "block";
-      canvas.style.cursor = "grab";
-      canvas.setAttribute("aria-keyshortcuts", this.mode === "disassembly-360" ? "ArrowLeft ArrowRight ArrowUp ArrowDown Home + -" : "ArrowLeft ArrowRight ArrowUp ArrowDown Enter");
+      canvas.style.cursor = this.hasPlayableColumns ? "grab" : "default";
+      canvas.tabIndex = this.hasPlayableColumns ? 0 : -1;
+      if (this.hasPlayableColumns) {
+        canvas.setAttribute("aria-keyshortcuts", this.mode === "disassembly-360" ? "ArrowLeft ArrowRight ArrowUp ArrowDown Home + -" : "ArrowLeft ArrowRight ArrowUp ArrowDown Enter");
+      } else canvas.removeAttribute("aria-keyshortcuts");
     }
     if (this.canAnimate()) this.requestFrame();
     else this.cancelFrame();
@@ -478,7 +487,7 @@ class Scene implements SkyframeScene {
     this.placeCamera(position, archiveHeight(this.selected, this.selected, time, 0, homeWeight));
 
     if (this.archive.root.visible) {
-      this.archive.update(this.camera, { columns: this.columns, pan: this.pan, selected: this.selected,
+      this.archive.update(this.camera, { columns: this.columns, libraryLoaded: this.libraryLoaded, pan: this.pan, selected: this.selected,
         hover: this.hovered, studyCardVisible: showStudy, armLift: this.armLift, time, idle,
         wrapPlaylists: this.wrapPlaylists, wrapTracks: this.wrapTracks, playing: this.playing,
         dt: this.reduced || !this.quality.idleMotion ? 1 : dt, reveal, homeWeight });
@@ -608,7 +617,7 @@ class Scene implements SkyframeScene {
   }
 
   private canBrowse() {
-    return this.mode === "archive-array" && isArchiveResting(this.extraction);
+    return this.hasPlayableColumns && this.mode === "archive-array" && isArchiveResting(this.extraction);
   }
 
   private matchesArmed(cell: ArchiveCell | null | undefined) {
@@ -757,7 +766,7 @@ class Scene implements SkyframeScene {
       }, { signal });
     }
     canvas.addEventListener("pointerleave", () => {
-      if (this.pointer) return;
+      if (this.pointer || !this.hasPlayableColumns) return;
       this.hoverPending = false;
       this.hovered = null;
       canvas.style.cursor = "grab";

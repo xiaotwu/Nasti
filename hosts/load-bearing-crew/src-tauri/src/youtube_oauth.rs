@@ -4,9 +4,9 @@ use base64::Engine;
 use reqwest::{Client, StatusCode, Url};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::io::{ErrorKind, Read};
+use std::io::{ErrorKind, Read, Write};
 use std::net::Ipv4Addr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -25,6 +25,7 @@ pub(crate) struct YoutubeOAuth {
     client: Client,
     api_origin: Url,
     config: Option<DesktopClient>,
+    client_file: PathBuf,
     use_system_keychain: bool,
     restored_grant: bool,
     refresh_token: Option<String>,
@@ -77,6 +78,7 @@ impl YoutubeOAuth {
             client,
             api_origin: Url::parse(OAUTH_API_ORIGIN).expect("constant Google OAuth origin"),
             config,
+            client_file: client_file.to_owned(),
             use_system_keychain: use_system_keychain && cfg!(target_os = "macos"),
             restored_grant: false,
             refresh_token: None,
@@ -86,6 +88,44 @@ impl YoutubeOAuth {
 
     pub(crate) fn configured(&self) -> bool {
         self.config.is_some()
+    }
+
+    pub(crate) fn configure_client(&mut self, json: &str) -> Result<(), String> {
+        if self.configured() || self.has_session() {
+            return Err("Google 桌面 OAuth 客户端已配置".into());
+        }
+        let client = DesktopClient::parse_download(json.as_bytes())?;
+        let directory = self
+            .client_file
+            .parent()
+            .ok_or("无法保存 Google 桌面 OAuth 客户端 JSON")?;
+        // Publish the complete private file only if the destination still does not exist.
+        let mut pending = tempfile::Builder::new()
+            .prefix(".nasti-oauth-")
+            .tempfile_in(directory)
+            .map_err(|_| "无法保存 Google 桌面 OAuth 客户端 JSON".to_owned())?;
+        let settings = serde_json::json!({
+            "installed": {"client_id": &client.id, "client_secret": &client.secret}
+        });
+        serde_json::to_writer(&mut pending, &settings)
+            .map_err(|_| "无法保存 Google 桌面 OAuth 客户端 JSON".to_owned())?;
+        pending
+            .flush()
+            .and_then(|_| pending.as_file().sync_all())
+            .map_err(|_| "无法保存 Google 桌面 OAuth 客户端 JSON".to_owned())?;
+        pending
+            .persist_noclobber(&self.client_file)
+            .map_err(|error| {
+                if error.error.kind() == ErrorKind::AlreadyExists {
+                    "Google 桌面 OAuth 客户端 JSON 文件已存在"
+                } else {
+                    "无法保存 Google 桌面 OAuth 客户端 JSON"
+                }
+                .to_owned()
+            })?;
+        self.config = Some(client);
+        self.restored_grant = false;
+        Ok(())
     }
 
     pub(crate) fn has_session(&self) -> bool {
@@ -316,12 +356,16 @@ impl DesktopClient {
         std::fs::File::open(path)
             .and_then(|file| file.take(CLIENT_FILE_LIMIT + 1).read_to_end(&mut bytes))
             .map_err(|_| "无法读取 Google 桌面 OAuth 客户端 JSON".to_owned())?;
+        Self::parse_download(&bytes).map(Some)
+    }
+
+    fn parse_download(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() as u64 > CLIENT_FILE_LIMIT {
             return Err("Google 桌面 OAuth 客户端 JSON 文件无效".into());
         }
         let DesktopClientDownload {
             installed: mut client,
-        } = serde_json::from_slice(&bytes)
+        } = serde_json::from_slice(bytes)
             .map_err(|_| "请选择从 Google Cloud 下载的 Desktop app OAuth 客户端 JSON".to_owned())?;
         client.id = client.id.trim().to_owned();
         if client.id.is_empty() {
@@ -331,7 +375,7 @@ impl DesktopClient {
             .secret
             .map(|secret| secret.trim().to_owned())
             .filter(|secret| !secret.is_empty());
-        Ok(Some(client))
+        Ok(client)
     }
 }
 
@@ -605,6 +649,7 @@ mod tests {
                 id: "desktop-client".into(),
                 secret: Some("desktop-secret".into()),
             }),
+            client_file: PathBuf::new(),
             use_system_keychain: false,
             restored_grant: false,
             refresh_token: None,
@@ -713,6 +758,49 @@ mod tests {
         let absent = directory.path().join("absent.json");
         assert!(DesktopClient::read_file(&absent, false).unwrap().is_none());
         assert!(DesktopClient::read_file(&absent, true).is_err());
+    }
+
+    #[tokio::test]
+    async fn configures_an_empty_install_with_private_persistence_and_no_overwrite() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("youtube-oauth-client.json");
+        let (mut oauth, server) = mock_google(Vec::new()).await;
+        oauth.config = None;
+        oauth.client_file = path.clone();
+        assert!(oauth.access_token().await.unwrap().is_none());
+
+        let web_client = r#"{"web":{"client_id":"synthetic-web-client"}}"#;
+        assert!(oauth.configure_client(web_client).is_err());
+        assert!(oauth
+            .configure_client(&"x".repeat(CLIENT_FILE_LIMIT as usize + 1))
+            .is_err());
+        assert!(!path.exists());
+        assert!(!oauth.configured());
+
+        let desktop_client = r#"{"installed":{"client_id":" fixture.apps.googleusercontent.com ","client_secret":" synthetic "}}"#;
+        // A file created after launch may belong to the user. A first-time import must preserve it.
+        std::fs::write(&path, "existing").unwrap();
+        assert!(oauth.configure_client(desktop_client).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "existing");
+        assert!(!oauth.configured());
+        std::fs::remove_file(&path).unwrap();
+
+        oauth.configure_client(desktop_client).unwrap();
+        assert!(oauth.configured());
+        assert!(!oauth.has_session());
+        assert!(!oauth.restored_grant);
+        assert!(oauth.configure_client(desktop_client).is_err());
+        let reloaded = DesktopClient::read_file(&path, true).unwrap().unwrap();
+        assert_eq!(reloaded.id, "fixture.apps.googleusercontent.com");
+        assert_eq!(reloaded.secret.as_deref(), Some("synthetic"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        assert!(server.await.unwrap().is_empty());
     }
 
     #[test]

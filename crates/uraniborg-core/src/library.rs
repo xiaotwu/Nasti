@@ -764,6 +764,36 @@ mod tests {
         Arc::new(Catalog::load(root).unwrap())
     }
 
+    #[tokio::test]
+    async fn empty_release_library_can_import_its_first_archive_playlist() {
+        let scratch = tempfile::tempdir().unwrap();
+        let media = scratch.path().join("media");
+        std::fs::create_dir(&media).unwrap();
+        std::fs::write(
+            media.join("catalog.json"),
+            br#"{"tracks":[],"playlists":[],"lyrics":{}}"#,
+        )
+        .unwrap();
+        let catalog = Arc::new(Catalog::load(&media).unwrap());
+        let path = scratch.path().join("library.sqlite3");
+        let library = Library::open(&path, Arc::clone(&catalog)).await.unwrap();
+        assert!(library.columns().await.unwrap().is_empty());
+
+        let album = crate::archive::fixture_album();
+        let imported = library.apply_archive(&album, None).await.unwrap();
+        assert!(!imported.tracks.is_empty());
+        assert!(imported.tracks.iter().all(|entry| entry.imported));
+        drop(library);
+
+        let reopened = Library::open(&path, catalog).await.unwrap();
+        let columns = reopened.columns().await.unwrap();
+        assert_eq!(columns.len(), 1);
+        assert_eq!(columns[0].tracks.len(), album.source.video_ids.len());
+        assert!(columns[0]
+            .tracks
+            .iter()
+            .all(|track| track.entry_id.is_some()));
+    }
 
     #[tokio::test]
     async fn partial_source_import_and_atomic_undo_keep_repeated_occurrences() {
