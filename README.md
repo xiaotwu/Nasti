@@ -1,11 +1,11 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/media/brand/nasti-character-logo-dark.png">
-    <img src="docs/media/brand/nasti-character-logo-light.png" width="590" alt="Nasti’s illustrated engineer portrait and double-ring NASTI wordmark">
+    <img src="docs/media/brand/nasti-character-logo-light.png" width="800" alt="Nasti’s illustrated engineer portrait and double-ring NASTI wordmark">
   </picture>
 </p>
 
-<h1 align="center">Nasti</h1>
+<h1 align="center">Nasti · 娜斯提</h1>
 
 <p align="center">
   <strong>Rhine Lab Acoustic Terminal</strong><br>
@@ -13,8 +13,8 @@
 </p>
 
 <p align="center">
-  A desktop music player inspired by Nasti from <em>Arknights</em>.<br>
-  <span lang="zh-CN">以《明日方舟》娜斯提为灵感的桌面音乐播放器。</span>
+  A Music Player Inspired by Nasti from <em>Arknights</em>.<br>
+  <span lang="zh-CN">以《明日方舟》娜斯提为灵感的音乐播放器</span>
 </p>
 
 <p align="center">
@@ -33,7 +33,7 @@
 <p>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/media/readme/archive-dark.jpg">
-    <img src="docs/media/readme/archive-light.jpg" width="836" alt="Three-dimensional home archive with 酸橙色信箋 selected">
+    <img src="docs/media/readme/archive-light.jpg" width="836" alt="Three-dimensional home archive with 直到大地變成一顆酸橙 selected">
   </picture>
 </p>
 
@@ -43,21 +43,23 @@
 </p>
 
 <p>
-  The home preview uses the imported playlist’s track metadata with <em lang="zh-CN">酸橙色信箋</em> selected.<br>
-  <span lang="zh-CN">首页预览采用实际导入的歌单曲目信息，选中《酸橙色信笺》。</span><br>
-  <a href="https://monster-siren.hypergryph.com/music/880385">Monster Siren Records · Cover art / 塞壬唱片 · 封面来源</a>
+  The home preview shows the <em lang="zh-CN">直到大地變成一顆酸橙 (Original Soundtrack)</em> in its original order, with the title track selected.<br>
+  <span lang="zh-CN">首页按《直到大地变成一颗酸橙》原声专辑的曲序展示歌单，选中同名曲。</span><br>
+  <a href="https://music.youtube.com/playlist?list=OLAK5uy_muPAf3cDjEGtAf8Dxo370mJzvnzbocDjk">Soundtrack playlist / 原声歌单</a>
+  ·
+  <a href="https://music.youtube.com/watch?v=NscanMhMPgE">Title track / 同名曲</a>
 </p>
 
 <p>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/media/readme/playback-and-playlist-dark.jpg">
-    <img src="docs/media/readme/playback-and-playlist-light.jpg" width="836" alt="Playback detail showing the official cover of 酸橙色信箋 and its highlighted entry in the playlist">
+    <img src="docs/media/readme/playback-and-playlist-light.jpg" width="836" alt="Playback detail showing the original soundtrack cover and its highlighted second track, 直到大地變成一顆酸橙">
   </picture>
 </p>
 
 <p>
-  The playback detail shows the official cover and highlights <em lang="zh-CN">酸橙色信箋</em>, the fifth track in the original playlist.<br>
-  <span lang="zh-CN">播放详情展示官方封面，并在原歌单曲序中高亮第 5 首《酸橙色信笺》。</span>
+  The playback detail shows the official soundtrack cover and highlights the title track, second in the original playlist.<br>
+  <span lang="zh-CN">播放详情展示原声专辑官方封面，并高亮原歌单第 2 首同名曲《直到大地变成一颗酸橙》。</span>
 </p>
 
 <p>
@@ -85,18 +87,9 @@
 
 <p>
   <strong>Featured track and cover art / 展示曲目与封面</strong><br>
-  The screenshots feature <em lang="zh-CN">酸橙色信笺</em> and its official cover art from Monster Siren Records (MSR).<br>
-  <span lang="zh-CN">截图展示的曲目为塞壬唱片（MSR）发行的《酸橙色信笺》，封面采用官方发行图。</span><br>
-  <a href="https://monster-siren.hypergryph.com/music/880385">Official release / 官方发行页</a>
-  ·
-  <a href="https://music.youtube.com/watch?v=91UkWokuc_o">YouTube Music / 原曲</a>
-</p>
-
-<p>
-  <strong>README layout / README 排版</strong><br>
-  The character-led introduction and interface previews take inspiration from the Clash Nyanpasu README.<br>
-  <span lang="zh-CN">以角色开场、随后展示界面的排版参考了 Clash Nyanpasu 的 README。</span><br>
-  <a href="https://github.com/libnyanpasu/clash-nyanpasu#readme">Clash Nyanpasu README</a>
+  The screenshots feature the title track of <em lang="zh-CN">直到大地變成一顆酸橙 (Original Soundtrack)</em> and its official album cover from Monster Siren Records (MSR).<br>
+  <span lang="zh-CN">截图展示塞壬唱片（MSR）发行的《直到大地变成一颗酸橙》原声专辑同名曲，封面采用该专辑官方发行图。</span><br>
+  <a href="https://monster-siren.hypergryph.com/music/697674">Official release / 官方发行页</a>
 </p>
 
 <h2>License / 许可</h2>
