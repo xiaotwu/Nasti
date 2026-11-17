@@ -136,6 +136,7 @@ class FaceAtlas {
 
 export interface ArchiveRenderFrame {
   columns: PlaylistColumn[];
+  libraryLoaded: boolean;
   pan: ArchiveCell;
   selected: ArchiveCell;
   hover: ArchiveCell | null;
@@ -226,6 +227,7 @@ export class ArchiveRenderer {
 
   update(camera: THREE.PerspectiveCamera, frame: ArchiveRenderFrame) {
     const { columns, pan, selected, hover, time, idle, dt } = frame;
+    const hasPlayableColumns = columns.some((column) => column.tracks.length > 0);
     this.visible.length = 0;
     const palette = cassettePalette(this.theme);
     this.frustum.setFromProjectionMatrix(this.matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
@@ -239,7 +241,8 @@ export class ArchiveRenderer {
       else this.hoverLifts.set(key, next);
     }
 
-    if (columns.length > 0) {
+    // A loaded, empty library still uses the existing decorative cassettes.
+    if (columns.length > 0 || frame.libraryLoaded) {
       const mainLane = Math.round(pan.lane);
       const centerRow = Math.round(pan.row);
       const rowSpacing = archiveRowSpacing(frame.homeWeight);
@@ -248,7 +251,7 @@ export class ArchiveRenderer {
       const heightAt = (cell: ArchiveCell) => {
         const lift = sameCell(cell, selected) ? SELECTION_LIFT + frame.armLift
           : cell.lane === selected.lane ? this.hoverLifts.get(`${cell.lane}:${cell.row}`) ?? 0 : 0;
-        return field(cell) + lift - frame.reveal;
+        return field(cell) + (hasPlayableColumns ? lift : 0) - frame.reveal;
       };
       for (const offset of LANE_OFFSETS) {
         if (Math.abs(offset) > 2 && frame.homeWeight === 0) continue;
@@ -267,7 +270,7 @@ export class ArchiveRenderer {
         for (let row = startRow - backRows; row < endRow + FRONT_ROWS; row++) {
           const ghost = decorativeLane || row < startRow || row >= endRow;
           const cell = { lane, row };
-          const active = sameCell(cell, selected);
+          const active = hasPlayableColumns && sameCell(cell, selected);
           if (active && frame.studyCardVisible) continue;
           const z = (row - pan.row) * rowSpacing;
           const y = heightAt(cell) - lowered;
@@ -280,7 +283,7 @@ export class ArchiveRenderer {
             key = faceKey(item.track);
             this.keys.set(item.track, key);
           }
-          const raised = active || sameCell(cell, hover);
+          const raised = active || (hasPlayableColumns && sameCell(cell, hover));
           const rise = rowSpacing * (camera.position.y - y - CASE_HEIGHT * scale / 2) / Math.max(1, camera.position.z - z);
           const clearance = THREE.MathUtils.clamp(y + lowered - heightAt({ lane, row: row + 1 }) + rise, .17, .98);
           const tilt = !active && frame.homeWeight > 0

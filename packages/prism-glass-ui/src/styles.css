@@ -443,6 +443,25 @@ svg { display: block; width: 1em; height: 1em; }
 }
 .volume-range-hit > .range { pointer-events: none; }
 
+.first-use-panel {
+  position: absolute;
+  z-index: 4;
+  inset-block-start: 50%;
+  inset-inline-start: 50%;
+  transform: translate(-50%, -50%);
+  width: min(calc(100% - var(--shell-pad) * 2), 440px);
+  padding: clamp(14px, 2vw, 22px);
+  display: grid;
+  gap: 10px;
+  border-radius: 16px;
+  --glass-opacity: .92;
+}
+.first-use-panel h1 { font-size: var(--text-heading); font-weight: 620; }
+.first-use-panel p { color: var(--secondary); line-height: 1.45; }
+.first-use-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.first-use-actions [data-action="browse-archive"] { background: var(--selection); }
+.first-use-actions [data-action="browse-archive"]:hover { background: var(--press); }
+
 .feedback, .loading-status {
   position: absolute;
   z-index: 9;
@@ -802,17 +821,27 @@ svg { display: block; width: 1em; height: 1em; }
 }
 #youtube-controls { display: grid; gap: 9px; min-inline-size: 0; margin: 0; padding: 0; border: 0; }
 #youtube-controls:disabled { opacity: .74; }
+.youtube-client-setup {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.youtube-client-setup h3 { font-size: var(--text-body); }
+.youtube-client-setup p { color: var(--secondary); line-height: 1.45; }
+.youtube-client-setup > div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.youtube-client-setup a { font-size: var(--text-small); }
 .youtube-toolbar { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .youtube-list-tools :is([data-youtube-action="create"], .youtube-disclosure),
 #youtube-navigation .youtube-disclosure { margin-inline-start: auto; }
 .youtube-toolbar [aria-pressed="true"] { color: var(--gold); background: var(--selection); }
 .youtube-toolbar .text-button { font-size: var(--text-small); }
-#youtube-account-state, #youtube-status, #youtube-description, #youtube-snapshot {
+#youtube-status, #youtube-description, #youtube-snapshot {
   color: var(--secondary);
   font-size: var(--text-small);
   overflow-wrap: anywhere;
 }
-#youtube-account-state { flex: 1; min-inline-size: 0; }
 #youtube-status {
   position: sticky;
   top: 0;

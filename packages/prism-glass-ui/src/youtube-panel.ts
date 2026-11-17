@@ -14,6 +14,7 @@ type Announcement = "pending" | "success" | "error";
 type DataReply = Exclude<YoutubeReply, { kind: "done" }>;
 type ReplyValue<K extends DataReply["kind"]> = Extract<DataReply, { kind: K }>["value"];
 type Confirmation = { request: YoutubeRequest; caption: string; trigger: HTMLButtonElement };
+const maxClientFileBytes = 64 * 1024;
 const privacyLabels: Record<YoutubePrivacy, readonly [string, string]> = {
   private: ["私密", "Private"], public: ["公开", "Public"], unlisted: ["不公开", "Unlisted"],
 };
@@ -26,6 +27,8 @@ export class YoutubePanel {
   private readonly importForm = element<HTMLFormElement>("youtube-import");
   private readonly input = element<HTMLInputElement>("youtube-reference");
   private readonly connect = this.control("connect");
+  private readonly configure = this.control("configure-client");
+  private readonly clientFile = element<HTMLInputElement>("youtube-client-file");
   private readonly retry = this.control("retry");
   private account: YoutubeStatus | null = null;
   private source: ListSource = "imported";
@@ -46,6 +49,11 @@ export class YoutubePanel {
       const button = event.target.closest<HTMLButtonElement>("button[data-youtube-action]");
       if (button && !button.disabled && !this.controls.disabled) this.handle(button);
       else if (!event.target.closest(".youtube-disclosure")) this.setMenu(null);
+    }, { signal });
+    this.clientFile.addEventListener("change", () => {
+      const file = this.clientFile.files?.[0];
+      this.clientFile.value = "";
+      if (file) void this.configureClient(file);
     }, { signal });
     this.importForm.addEventListener("submit", event => {
       event.preventDefault();
@@ -99,6 +107,7 @@ export class YoutubePanel {
       this.retry.hidden = loaded;
       this.renderAccount();
       if (this.selected) this.focus(element("youtube-title"));
+      else if (!element("youtube-client-setup").hidden) this.focus(this.configure);
       else this.focus(this.connect.hidden ? this.input : this.connect);
     });
   }
@@ -159,7 +168,10 @@ export class YoutubePanel {
     if ((await this.invoke(request)).kind !== "done") throw new Error(t("YouTube Music 返回了意外的结果", "YouTube Music returned an unexpected response"));
   }
 
-  private async run(work: () => Promise<void>, pending: string, success = ""): Promise<boolean> {
+  private async run(
+    work: () => Promise<void>, pending: string, success = "",
+    failure: readonly [string, string] = ["YouTube Music 操作失败", "The YouTube Music operation failed"],
+  ): Promise<boolean> {
     if (this.controls.disabled) return false;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.controls.disabled = true;
@@ -170,7 +182,7 @@ export class YoutubePanel {
       this.announce(success, "success");
       return true;
     } catch (error) {
-      this.announce(localizeError(error, "YouTube Music 操作失败", "The YouTube Music operation failed"), "error");
+      this.announce(localizeError(error, ...failure), "error");
       return false;
     } finally {
       this.controls.disabled = false;
@@ -204,6 +216,7 @@ export class YoutubePanel {
     this.setMenu(null);
     switch (action) {
       case "retry": void this.show(); return;
+      case "configure-client": this.clientFile.click(); return;
       case "connect": void this.connectAccount(); return;
       case "disconnect": this.askConfirmation(
         { action }, t("撤销授权并移除这个账号的本地歌单记录？", "Revoke access and remove this account’s local playlist records?"), trigger,
@@ -258,6 +271,22 @@ export class YoutubePanel {
           void this.changePlaylist({ action, playlistId, entryId, position: Number(button.dataset.position) }, t("已更新曲序", "Track order updated"), button);
         }
     }
+  }
+
+  private async configureClient(file: File): Promise<void> {
+    if (this.controls.disabled || element("youtube-client-setup").hidden) return;
+    if (file.size > maxClientFileBytes) {
+      this.announce(t("客户端 JSON 文件不能超过 64 KiB。", "The client JSON file must be 64 KiB or smaller."), "error");
+      this.focus(this.configure);
+      return;
+    }
+    await this.run(async () => {
+      this.account = await this.request({ action: "configureClient", clientJson: await file.text() }, "status");
+      this.renderAccount();
+      this.nextFocus = this.connect.hidden ? this.input : this.connect;
+    }, t("正在读取客户端配置…", "Reading client configuration…"),
+    t("客户端配置已保存。现在可以连接 Google 账号。", "Client settings saved. You can now connect your Google account."),
+    ["无法加载客户端配置，请选择桌面应用的 OAuth JSON 文件。", "Could not load the client settings. Choose the Desktop app OAuth JSON file."]);
   }
 
   private async connectAccount(): Promise<void> {
@@ -505,9 +534,7 @@ export class YoutubePanel {
 
   private renderAccount(): void {
     const status = this.account;
-    const caption = status && !status.canConnect && !status.connected
-      ? t("请先配置 Google 桌面 OAuth 客户端", "Set up a Google desktop OAuth client to connect") : "";
-    setText(element("youtube-account-state"), caption);
+    this.renderClientSetup();
     this.connect.hidden = !status?.canConnect || status.connected;
     element("youtube-account-tools").hidden = !status?.connected;
     this.control("mine").hidden = this.control("create").hidden = !status?.connected;
@@ -515,9 +542,16 @@ export class YoutubePanel {
     if (this.selected) this.showPlaylist(this.selected);
   }
 
+  private renderClientSetup(): void {
+    const status = this.account;
+    element("youtube-client-setup").hidden = !status || status.canConnect || status.connected
+      || Boolean(this.selected || this.confirmation || this.editing);
+  }
+
   private renderView(): void {
     const overlay = Boolean(this.confirmation || this.editing);
     element("youtube-navigation").hidden = Boolean(this.selected) || overlay;
+    this.renderClientSetup();
     const add = this.control("add-song");
     const adding = this.adding && !add.hidden && Boolean(this.selected) && !overlay;
     element("youtube-add").hidden = !adding;

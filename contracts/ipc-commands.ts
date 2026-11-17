@@ -223,6 +223,7 @@ export interface YoutubePlaylist extends YoutubePlaylistSummary {
 
 export type YoutubeRequest =
   | { action: "status" }
+  | { action: "configureClient"; clientJson: string }
   | { action: "connect" }
   | { action: "disconnect" }
   | { action: "mine" }

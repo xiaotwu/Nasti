@@ -111,4 +111,8 @@ Download the Apple Silicon macOS prerelease from [GitHub Releases](https://githu
 
 从 [GitHub Releases](https://github.com/xiaotwu/Nasti/releases) 下载 Apple Silicon macOS 预发行版。首次打开时曲库为空。可从 Nasti 检索支持的 Internet Archive 授权目录。YouTube Music 歌单管理需要自行配置 OAuth，播放由 YouTube Music 打开。
 
+从空曲库开始时，首页可直接打开授权曲库、导入歌单或进入 YouTube Music。使用 YouTube Music 前，在 Google Cloud 启用 [YouTube Data API v3](https://developers.google.com/youtube/data/guides/authentication) 并下载[桌面应用 OAuth 客户端 JSON](https://developers.google.com/identity/protocols/oauth2/native-app)，然后在 Nasti 导入面板选择文件并连接 Google。该文件只保存在本机。
+
+From the empty home screen, open the licensed catalog, import a playlist, or open YouTube Music. To use YouTube Music, enable the YouTube Data API v3, download a Desktop app OAuth client JSON from Google Cloud, select it in Nasti, and connect your account. The configuration stays on your Mac.
+
 Build with Node, pnpm 11, Rust and Xcode. Run `pnpm install --frozen-lockfile` and then `pnpm --dir hosts/load-bearing-crew exec tauri build --bundles app`. See the [release fidelity specification](docs/RELEASE_FIDELITY_SPEC.md) and [third-party notices](NOTICE.md).

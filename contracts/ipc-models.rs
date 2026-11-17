@@ -350,7 +350,7 @@ pub struct YoutubePlaylist {
     pub imported_at: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(
     tag = "action",
     rename_all = "camelCase",
@@ -358,6 +358,9 @@ pub struct YoutubePlaylist {
 )]
 pub enum YoutubeRequest {
     Status,
+    ConfigureClient {
+        client_json: String,
+    },
     Connect,
     Disconnect,
     Mine,

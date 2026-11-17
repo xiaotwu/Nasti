@@ -172,6 +172,10 @@ impl YoutubeServices {
                 }
                 Ok(self.status(&account))
             }
+            YoutubeRequest::ConfigureClient { client_json } => {
+                account.oauth.configure_client(&client_json)?;
+                Ok(self.status(&account))
+            }
             YoutubeRequest::Connect => {
                 if self.authorize(library, &mut account).await?.is_some() {
                     return Ok(self.status(&account));

@@ -91,6 +91,16 @@ export function mountLayout(root: HTMLElement): void {
         </div>
       </section>
 
+      <section class="glass first-use-panel" id="first-use" aria-labelledby="first-use-title" hidden>
+        <h1 id="first-use-title">${t("添加第一张歌单", "Add your first playlist")}</h1>
+        <p data-archive-entry hidden>${t("从授权曲库添加曲目，即可在 Nasti 播放。", "Add tracks from the licensed catalog to play them in Nasti.")}</p>
+        <div class="first-use-actions">
+          <button class="text-button" type="button" data-action="browse-archive" data-archive-entry hidden>${icon("globe")}${t("搜索授权曲库", "Search licensed catalog")}</button>
+          <button class="text-button" type="button" data-action="import-playlist">${icon("import")}${t("导入歌单", "Import playlist")}</button>
+          <button class="text-button" type="button" data-action="youtube-playlists" data-youtube-entry hidden>${icon("music")}YouTube Music</button>
+        </div>
+      </section>
+
       <aside class="silhouette" id="companion" aria-hidden="true" hidden></aside>
       <section class="detail" id="detail" aria-label="${t("歌曲详情", "Track details")}" hidden>
         <div class="detail-inner" id="detail-inner">
@@ -267,7 +277,6 @@ export function mountLayout(root: HTMLElement): void {
             <fieldset id="youtube-controls">
               <div id="youtube-navigation" class="youtube-toolbar">
                 ${button("back", "import-playlist", t("返回导入歌单", "Back to playlist import"))}
-                <span id="youtube-account-state"></span>
                 <button type="button" class="text-button" data-youtube-action="connect" hidden>${t("连接 Google 账号", "Connect Google account")}</button>
                 ${youtubeButton("restart", "retry", t("重新读取账号和歌单", "Reload account and playlists"), "hidden")}
                 <div id="youtube-account-tools" class="youtube-disclosure" hidden>
@@ -277,6 +286,15 @@ export function mountLayout(root: HTMLElement): void {
                   </div>
                 </div>
               </div>
+              <section id="youtube-client-setup" class="youtube-client-setup" aria-labelledby="youtube-client-title" hidden>
+                <h3 id="youtube-client-title">${t("Google 桌面 OAuth 客户端", "Google desktop OAuth client")}</h3>
+                <p id="youtube-client-help">${t("在 Google Cloud 中启用 YouTube Data API v3，创建「桌面应用」OAuth 客户端并下载 JSON 文件。在这里选取文件，再连接 Google 账号。", "Enable YouTube Data API v3 in Google Cloud. Create a Desktop app OAuth client and download its JSON file. Choose that file here, then connect your Google account.")}</p>
+                <div>
+                  <button class="text-button" type="button" data-youtube-action="configure-client" aria-describedby="youtube-client-help">${t("选择客户端 JSON 文件", "Choose client JSON file")}</button>
+                  <a href="https://developers.google.com/youtube/data/guides/authentication" target="_blank" rel="noopener noreferrer">${t("Google 配置说明", "Google setup guide")}</a>
+                </div>
+                <input type="file" id="youtube-client-file" accept=".json,application/json" hidden>
+              </section>
               <form id="youtube-import" class="import-form">
                 <label class="search-input">${icon("link")}<input id="youtube-reference" autocomplete="off" placeholder="${t("歌单链接或编号", "Playlist link or ID")}" aria-label="${t("YouTube Music 歌单链接或编号", "YouTube Music playlist link or ID")}" required></label>
                 <button type="submit" class="icon-button" aria-label="${t("导入歌单", "Import playlist")}" title="${t("导入歌单", "Import playlist")}">${icon("import")}</button>
