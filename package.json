@@ -1,0 +1,19 @@
+{
+  "name": "nasti-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "dev:ui": "pnpm --filter @nasti/prism-glass-ui dev",
+    "dev:mac": "pnpm --dir hosts/load-bearing-crew exec tauri dev",
+    "build:mac": "./script/build_and_run.sh --build",
+    "check:contracts": "node scripts/verify-contracts.mjs",
+    "check:visual-e2": "node scripts/check-e2-tokens.mjs",
+    "check:all": "node scripts/verify-contracts.mjs && node scripts/check-e2-tokens.mjs && cargo check --workspace"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.0"
+  }
+}

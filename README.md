@@ -104,3 +104,11 @@
   <span lang="zh-CN">第三方美术、标志、模型和录音沿用各自的权利与许可。</span><br>
   <a href="https://spdx.org/licenses/GPL-3.0-or-later.html">Read the full license / 查看许可全文</a>
 </p>
+
+## Get Nasti / 下载与构建
+
+Download the Apple Silicon macOS prerelease from [GitHub Releases](https://github.com/xiaotwu/Nasti/releases). This is an empty-library build. Use Nasti's search to access the supported licensed Internet Archive catalog. YouTube Music playlist management requires your own OAuth configuration and opens playback externally.
+
+从 [GitHub Releases](https://github.com/xiaotwu/Nasti/releases) 下载 Apple Silicon macOS 预发行版。首次打开时曲库为空。可从 Nasti 检索支持的 Internet Archive 授权目录。YouTube Music 歌单管理需要自行配置 OAuth，播放由 YouTube Music 打开。
+
+Build with Node, pnpm 11, Rust and Xcode. Run `pnpm install --frozen-lockfile` and then `pnpm --dir hosts/load-bearing-crew exec tauri build --bundles app`. See the [release fidelity specification](docs/RELEASE_FIDELITY_SPEC.md) and [third-party notices](NOTICE.md).

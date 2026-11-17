@@ -1,0 +1,88 @@
+/* Arrow and tick proportions from RhineLabUI's archive navigator. */
+.archive-navigation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: clamp(6px, 1.2vw, 15px);
+  pointer-events: auto;
+}
+
+.archive-navigation[hidden] { display: none; }
+
+.archive-arrow {
+  display: grid;
+  place-items: center;
+  flex: 0 0 46px;
+  width: 46px;
+  height: 46px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--foreground);
+  background: transparent;
+  font: 28px/1 system-ui, sans-serif;
+  transition: background-color .3s;
+}
+
+.archive-arrow:hover:not(:disabled) { background: var(--hover); }
+.archive-arrow:disabled { opacity: .25; cursor: default; }
+
+.archive-ticks {
+  /* A native range's first/last values align with the thumb's center. */
+  --thumb-width: 14px;
+  position: relative;
+  flex: 1;
+  min-width: var(--thumb-width);
+  height: 40px;
+  color: var(--foreground);
+}
+
+.archive-tick-markers {
+  position: absolute;
+  inset: 0 calc(var(--thumb-width) / 2);
+  pointer-events: none;
+}
+
+.archive-tick {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  background: var(--secondary);
+  opacity: .6;
+  transition: height .4s, background-color .4s, opacity .4s;
+}
+
+.archive-tick.is-hovered { height: 24px; background: var(--accent); opacity: 1; }
+.archive-tick.is-active { z-index: 1; height: 33px; background: currentColor; opacity: 1; }
+.archive-ticks:has(.archive-scale:focus-visible) .archive-tick.is-active { background: var(--gold); }
+
+.archive-scale {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  cursor: ew-resize;
+}
+
+.archive-scale:disabled { cursor: default; }
+.archive-scale:focus-visible { outline: none; }
+.archive-scale::-webkit-slider-runnable-track { height: 100%; background: transparent; }
+.archive-scale::-webkit-slider-thumb { appearance: none; width: var(--thumb-width); height: 100%; background: transparent; }
+.archive-scale::-moz-range-track { height: 100%; background: transparent; }
+.archive-scale::-moz-range-thumb { width: var(--thumb-width); height: 100%; border: 0; background: transparent; }
+
+@media (max-width: 1050px) {
+  .archive-navigation { gap: 6px; }
+  .archive-arrow { flex-basis: 36px; width: 36px; font-size: 24px; }
+}

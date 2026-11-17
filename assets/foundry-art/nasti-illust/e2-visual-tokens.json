@@ -1,0 +1,104 @@
+{
+  "character": "Nasti Lunorey (娜斯提)",
+  "referenceArtwork": "assets/foundry-art/nasti-illust/nasti_e2_reference.jpg",
+  "resolution": {
+    "width": 1024,
+    "height": 1024
+  },
+  "themes": {
+    "celestialCyan": {
+      "id": "celestial-cyan",
+      "name": "苍穹设计图 (Uraniborg Celestial Blueprint)",
+      "backgroundPrimary": "#eae5e1",
+      "backgroundSecondary": "#dcebe6",
+      "blueprintGridTint": "#429b8b",
+      "textPrimary": "#080a08",
+      "textSecondary": "#5a6b65",
+      "accentWandEmerald": "#48f0c8",
+      "accentGoldenSanctuary": "#e8cf8c",
+      "accentOliveSash": "#6c8c3c",
+      "accentAmberSignal": "#c5a16b",
+      "glassBlurPx": 28,
+      "glassSaturationPct": 195
+    },
+    "bansheeObsidian": {
+      "id": "banshee-obsidian",
+      "name": "河谷黑曜夜 (Convallis Banshee Obsidian)",
+      "backgroundPrimary": "#0d1314",
+      "backgroundSecondary": "#142022",
+      "blueprintGridTint": "#2c7a6c",
+      "textPrimary": "#e4ece9",
+      "textSecondary": "#8ca39d",
+      "accentWandEmerald": "#38f8c2",
+      "accentGoldenSanctuary": "#d9b86c",
+      "accentOliveSash": "#7ea346",
+      "accentAmberSignal": "#d9822b",
+      "glassBlurPx": 32,
+      "glassSaturationPct": 210
+    }
+  },
+  "e2ParallaxLayers": [
+    {
+      "layerIndex": 0,
+      "id": "L0_VOID_DIAMOND_MASK",
+      "name": "纯黑虚空与45°旋转菱形视窗剪裁遮罩 (Rotated Diamond Prism Clip)",
+      "parallaxFactor": 0.02,
+      "zOffset": -1.2,
+      "shaderEffect": "DiamondClipMask + SubtleChromaticRim"
+    },
+    {
+      "layerIndex": 1,
+      "id": "L1_BLUEPRINT_SKY_WINGS",
+      "name": "苍穹云海、青绿建筑蓝图网格与金色神圣羽翼穹顶 (Uraniborg Dome & Blueprint Grid)",
+      "parallaxFactor": 0.08,
+      "zOffset": -0.8,
+      "shaderEffect": "BlueprintScanline + GoldenSunburstGlow"
+    },
+    {
+      "layerIndex": 2,
+      "id": "L2_FLOATING_UNDERCITY_BIRDS",
+      "name": "底部倒悬浮空城底座、右侧特里蒙高塔剪影与高空飞鸟群 (Floating Undercity & Flock)",
+      "parallaxFactor": 0.16,
+      "zOffset": -0.4,
+      "shaderEffect": "VerticalFloatOscillation(period=11s)"
+    },
+    {
+      "layerIndex": 3,
+      "id": "L3_MECHANICAL_EXOSKELETON_RIBS",
+      "name": "环绕周身的黑色精密工程机械支臂、悬空玻璃板与橄榄绿飘带 (Engineering Mechanical Ribs & Green Sash)",
+      "parallaxFactor": 0.28,
+      "zOffset": -0.1,
+      "shaderEffect": "AudioFFT_LowFreq_MicroVibration"
+    },
+    {
+      "layerIndex": 4,
+      "id": "L4_NASTI_CORE_FIGURE",
+      "name": "娜斯提主体：银白短发、黑色骨角、金瞳眼镜、白衬衫、高腰条纹西装裤、左手骨哨控制器、右手高举 (Nasti Core Figure)",
+      "parallaxFactor": 0.4,
+      "zOffset": 0.0,
+      "shaderEffect": "BreathingChestAndHairWave(period=6.5s)"
+    },
+    {
+      "layerIndex": 5,
+      "id": "L5_EMERALD_ACOUSTIC_WAND",
+      "name": "右手高举的翠绿发光声学骨笔/指挥棒与青绿几何能量光束 (Cyan-Emerald Acoustic Wand & Beam)",
+      "parallaxFactor": 0.55,
+      "zOffset": 0.25,
+      "shaderEffect": "AudioFFT_HighFreq_LaserBloom + DiagonalDecryptionRayOrigin"
+    },
+    {
+      "layerIndex": 6,
+      "id": "L6_SOUNDWAVE_GLYPHS_DEBRIS",
+      "name": "前景右下角金色抽象竖条声波铭文与底部飞溅碎石粒子 (Golden Soundwave Barcodes & Debris)",
+      "parallaxFactor": 0.75,
+      "zOffset": 0.5,
+      "shaderEffect": "RealtimeSpectrumEqualizerBars(32-band)"
+    }
+  ],
+  "signatureMotifs": {
+    "acousticWand": "Right-hand raised glowing cyan-emerald stylus (#48f0c8) — acts as the origin of the diagonal decryption ray when extracting a 3D song cassette, and can serve as the playback progress laser pointer.",
+    "goldenSoundwaveGlyphs": "Bottom-right vertical hand-drawn golden barcode/waveform strokes from E2 art — replicated as the live audio spectrum visualizer inside the Master Playback Pill and 3D cassette edge.",
+    "mechanicalTrussRibs": "Black articulated micro-cranes and floating glass plates orbiting Nasti — integrated into the 6-part 360° cassette disassembly viewer.",
+    "diamondPrismFrame": "45-degree rotated architectural diamond frame — used as the signature container mask for the E2 Atelier companion view and boot sequence reveal."
+  }
+}
