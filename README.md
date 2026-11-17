@@ -33,7 +33,7 @@
 <p>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/media/readme/archive-dark.jpg">
-    <img src="docs/media/readme/archive-light.jpg" width="836" alt="Three-dimensional archive array with a track pulled up from its playlist">
+    <img src="docs/media/readme/archive-light.jpg" width="836" alt="Three-dimensional home archive with 酸橙色信箋 selected">
   </picture>
 </p>
 
@@ -43,20 +43,21 @@
 </p>
 
 <p>
+  The home preview uses the imported playlist’s track metadata with <em lang="zh-CN">酸橙色信箋</em> selected.<br>
+  <span lang="zh-CN">首页预览采用实际导入的歌单曲目信息，选中《酸橙色信笺》。</span><br>
+  <a href="https://monster-siren.hypergryph.com/music/880385">Monster Siren Records · Cover art / 塞壬唱片 · 封面来源</a>
+</p>
+
+<p>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/media/readme/playback-and-playlist-dark.jpg">
-    <img src="docs/media/readme/playback-and-playlist-light.jpg" width="836" alt="Playback detail with synchronized lyrics, followed by a real 545-track YouTube Music import">
+    <img src="docs/media/readme/playback-and-playlist-light.jpg" width="836" alt="Playback detail showing cover art and synchronized lyrics">
   </picture>
 </p>
 
 <p>
   Open a track to see its cover art and follow the lyrics in sync.<br>
   <span lang="zh-CN">打开歌曲档案，看唱片封面，跟着播放进度读歌词。</span>
-</p>
-
-<p>
-  Import playlists and open their tracks in YouTube Music. The screenshot shows a real 545-track playlist saved to Nasti.<br>
-  <span lang="zh-CN">导入歌单后，可在 YouTube Music 中打开歌曲。图中是实际导入 Nasti 的 545 首歌单。</span>
 </p>
 
 <p>
