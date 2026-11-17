@@ -94,7 +94,8 @@ fn bundle_info(bundle: &Path) -> Result<BundleInfo, String> {
 
 fn verify_bundle(bundle: &Path) -> Result<(), String> {
     let verify = Command::new("/usr/bin/codesign")
-        .args(["--verify", "--strict", "--deep", "-R", SIGNING_REQUIREMENT])
+        .args(["--verify", "--strict", "--deep"])
+        .arg(format!("-R={SIGNING_REQUIREMENT}"))
         .arg(bundle)
         .output();
     if !verify.is_ok_and(|out| out.status.success()) {
@@ -275,6 +276,13 @@ exec /usr/bin/open -n "$2"
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires an actual notarized Nasti release bundle"]
+    fn validates_a_notarized_release_fixture() {
+        let app = std::env::var_os("NASTI_SIGNED_QA_BUNDLE").expect("set fixture path");
+        verify_bundle(Path::new(&app)).unwrap();
+    }
 
     #[test]
     fn limits_archive_paths_to_a_single_app_bundle() {

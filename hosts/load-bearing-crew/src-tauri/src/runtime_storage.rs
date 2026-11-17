@@ -85,7 +85,7 @@ fn private_directory_error(path: &Path) -> io::Error {
 
 #[cfg(unix)]
 fn is_owned_directory(metadata: &Metadata, private: bool) -> bool {
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::os::unix::fs::PermissionsExt;
     let mode = metadata.permissions().mode() & 0o777;
     metadata.is_dir()
         && is_owned(metadata)
