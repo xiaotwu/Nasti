@@ -84,16 +84,12 @@
 </p>
 
 <p>
-  <strong>Recordings and cover art / 录音与封面</strong><br>
-  The sample library uses CC0 1.0 recordings by Bautsch, Chris (Fopseh), and Membeth. The <em>Auld Lang Syne</em> cover is cropped from NASA’s photo of Earth’s airglow.<br>
-  <span lang="zh-CN">示例曲库使用 Bautsch、Chris（Fopseh）和 Membeth 发布的 CC0 1.0 录音。《友谊地久天长》的封面裁自 NASA 拍摄的地球气辉照片。</span><br>
-  <a href="https://commons.wikimedia.org/wiki/File:AuldLangSyne.ogg">Auld Lang Syne / 友谊地久天长</a>
+  <strong>Featured track and cover art / 展示曲目与封面</strong><br>
+  The screenshots feature <em lang="zh-CN">酸橙色信笺</em> and its official cover art from Monster Siren Records (MSR).<br>
+  <span lang="zh-CN">截图展示的曲目为塞壬唱片（MSR）发行的《酸橙色信笺》，封面采用官方发行图。</span><br>
+  <a href="https://monster-siren.hypergryph.com/music/880385">Official release / 官方发行页</a>
   ·
-  <a href="https://commons.wikimedia.org/wiki/File:Bach_Cello_Suite_1_Prelude_(BWV_1007)_Played_by_Chris.ogg">Bach Prelude / 巴赫前奏曲</a>
-  ·
-  <a href="https://commons.wikimedia.org/wiki/File:Chopin.Nocturne.Es-Dur.opus.9.2.ogg">Chopin Nocturne / 肖邦夜曲</a>
-  ·
-  <a href="https://www.nasa.gov/image-article/an-aurora-dimly-intersects-with-earths-airglow/">NASA photo / NASA 原图</a>
+  <a href="https://music.youtube.com/watch?v=91UkWokuc_o">YouTube Music / 原曲</a>
 </p>
 
 <p>
