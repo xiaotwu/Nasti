@@ -1,0 +1,30 @@
+[package]
+name = "load-bearing-crew"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+uraniborg-core = { path = "../../../crates/uraniborg-core" }
+convallis-pipe = { path = "../../../crates/convallis-pipe" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+reqwest = { workspace = true, features = ["form", "json"] }
+base64 = "0.22"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+tauri = { version = "2", features = ["macos-private-api"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+cc = "1"
+
+[dev-dependencies]
+tempfile = "3"

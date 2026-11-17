@@ -1,0 +1,52 @@
+//! Load-Bearing Crew (应急承重小组) — Unified macOS & Windows 11 Tauri v2 Host
+
+mod catalog_commands;
+mod playback;
+mod ui_locale;
+mod youtube_commands;
+mod youtube_oauth;
+
+pub use uraniborg_core::models;
+
+pub fn run() {
+    tauri::Builder::default()
+        .setup(catalog_commands::setup)
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                playback::shutdown();
+            }
+        })
+        .invoke_handler(tauri::generate_handler![
+            ui_locale::ui_set_language,
+            catalog_commands::catalog_fetch_columns,
+            catalog_commands::catalog_import_playlist_url,
+            catalog_commands::catalog_preview_playlist,
+            catalog_commands::catalog_apply_playlist_import,
+            catalog_commands::catalog_search,
+            catalog_commands::catalog_search_archive,
+            catalog_commands::playlist_add_track,
+            catalog_commands::playlist_remove_track,
+            catalog_commands::playlist_remove_entries,
+            catalog_commands::playlist_restore_entries,
+            catalog_commands::vault_download_track,
+            catalog_commands::vault_remove_track,
+            catalog_commands::vault_get_storage_stats,
+            catalog_commands::vault_list_tracks,
+            catalog_commands::vault_set_storage_limit,
+            catalog_commands::lyrics_get_synced,
+            playback::playback_load,
+            playback::playback_get_state,
+            playback::playback_set_playing,
+            playback::playback_seek,
+            playback::playback_set_volume,
+            playback::playback_list_outputs,
+            playback::playback_set_output,
+            playback::playback_set_video_frame,
+            playback::playback_prepare,
+            playback::playback_commit,
+            playback::playback_cancel_preparation,
+            youtube_commands::youtube_playlist_action,
+        ])
+        .run(tauri::generate_context!())
+        .expect("Nasti desktop host failed");
+}
