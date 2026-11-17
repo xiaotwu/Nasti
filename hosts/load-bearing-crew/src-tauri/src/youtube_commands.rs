@@ -55,11 +55,15 @@ impl PlaylistChange {
 }
 
 impl YoutubeServices {
-    pub(crate) fn new(use_system_keychain: bool, client_file: &Path) -> Result<Self, String> {
+    pub(crate) fn new(
+        use_system_keychain: bool,
+        client_file: &Path,
+        staging_dir: &Path,
+    ) -> Result<Self, String> {
         Ok(Self {
             api: YoutubeApi::new().map_err(message)?,
             account: Mutex::new(Account {
-                oauth: YoutubeOAuth::new(use_system_keychain, client_file)?,
+                oauth: YoutubeOAuth::new(use_system_keychain, client_file, staging_dir)?,
                 channel: None,
             }),
         })
@@ -476,8 +480,12 @@ mod tests {
         let library = Library::open(&folder.path().join("library.sqlite3"), catalog)
             .await
             .unwrap();
-        let service =
-            YoutubeServices::new(false, &folder.path().join("youtube-oauth-client.json")).unwrap();
+        let service = YoutubeServices::new(
+            false,
+            &folder.path().join("youtube-oauth-client.json"),
+            folder.path(),
+        )
+        .unwrap();
         let saved_id = "PLpreviouslyImported";
         let mut saved = YoutubePlaylist {
             summary: YoutubePlaylistSummary {

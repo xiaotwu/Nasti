@@ -316,6 +316,18 @@ pub enum YoutubePrivacy {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AppUpdateStatus {
+    pub current_version: String,
+    pub available_version: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AppUpdateInstallArgs {
+    pub version: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct YoutubeStatus {
     pub can_connect: bool,
     pub connected: bool,

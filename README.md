@@ -13,4 +13,6 @@ Nasti 是基于 Tauri、Rust 和 Three.js 的 macOS 音乐播放器。首个 bet
 
 Build using Node, pnpm 11, Rust and Xcode. Run `pnpm install --frozen-lockfile` and then `pnpm --dir hosts/load-bearing-crew exec tauri build --bundles app`.
 
+Desktop update and cache behavior is described in [native storage and releases](docs/NATIVE_STORAGE.md). 关于应用内更新和本机缓存目录，见[桌面版更新与存储](docs/NATIVE_STORAGE.md)。
+
 Source is GPL-3.0-or-later. Archive model by LBEILC/RhineLabUI, used under MIT. See [LICENSE](LICENSE) and the [model notice](assets/foundry-art/desktop/ARCHIVE-LICENSE.txt).

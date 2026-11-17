@@ -1,4 +1,6 @@
-import { element } from "./layout";
+import { localizeError, t } from "./i18n";
+import { element, setText } from "./layout";
+import type { AppUpdater } from "./playback";
 
 export class SettingsNavigation {
   private readonly scroll = element("settings-scroll");
@@ -70,6 +72,67 @@ export class SettingsNavigation {
     this.active = index;
     for (const [i, button] of this.links.entries()) {
       button.setAttribute("aria-current", i === index ? "true" : "false");
+    }
+  }
+}
+
+
+export class SettingsUpdates {
+  private readonly status = element("settings-update-status");
+  private readonly controls = element("settings-update-controls");
+  private readonly checkButton = element<HTMLButtonElement>("settings-update-check");
+  private readonly installButton = element<HTMLButtonElement>("settings-update-install");
+  private availableVersion: string | null = null;
+  private busy = false;
+
+  constructor(private readonly updater: AppUpdater, private readonly signal: AbortSignal) {
+    element("settings-update").hidden = false;
+    this.checkButton.addEventListener("click", () => void this.check(), { signal });
+    this.installButton.addEventListener("click", () => void this.install(), { signal });
+  }
+
+  private setBusy(busy: boolean): void {
+    this.busy = busy;
+    for (const button of [this.checkButton, this.installButton]) {
+      button.setAttribute("aria-disabled", String(busy));
+    }
+    this.controls.setAttribute("aria-busy", String(busy));
+  }
+
+  private async check(): Promise<void> {
+    if (this.busy) return;
+    this.setBusy(true);
+    setText(this.status, t("正在检查更新…", "Checking for updates…"));
+    try {
+      const update = await this.updater.check();
+      if (this.signal.aborted) return;
+      this.availableVersion = update.availableVersion ?? null;
+      this.installButton.hidden = !this.availableVersion;
+      setText(this.status, this.availableVersion
+        ? t(`版本 ${this.availableVersion} 可用。`, `Version ${this.availableVersion} is available.`)
+        : t(`已是最新版本（${update.currentVersion}）。`, `You’re on the latest version (${update.currentVersion}).`));
+    } catch (error) {
+      if (this.signal.aborted) return;
+      this.availableVersion = null;
+      this.installButton.hidden = true;
+      setText(this.status, localizeError(error, "无法检查更新，请重试。", "Could not check for updates. Try again."));
+    } finally {
+      if (!this.signal.aborted) this.setBusy(false);
+    }
+  }
+
+  private async install(): Promise<void> {
+    const version = this.availableVersion;
+    if (this.busy || !version) return;
+    this.setBusy(true);
+    setText(this.status, t(`正在下载并安装 ${version}，完成后应用会重启…`, `Downloading and installing ${version}. Nasti will restart when it’s ready…`));
+    try {
+      await this.updater.install({ version });
+      if (!this.signal.aborted) setText(this.status, t("更新已安装，正在重启…", "Update installed. Restarting…"));
+    } catch (error) {
+      if (this.signal.aborted) return;
+      setText(this.status, localizeError(error, "无法安装更新，请重试。", "Could not install the update. Try again."));
+      this.setBusy(false);
     }
   }
 }

@@ -2,7 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { language, t } from "./i18n";
 import { createMockIpc } from "../../../contracts/mock-ipc";
 import type {
-  AuthorizedCatalog, MediaMode, NastiIpcContract, PlaybackController,
+  AppUpdateInstallArgs, AppUpdateStatus, AuthorizedCatalog, MediaMode, NastiIpcContract, PlaybackController,
   PlaybackSnapshot, PlaybackSpectrum, PlaybackStatus, PreparedPlayback, YoutubeReply, YoutubeRequest,
 } from "../../../contracts/ipc-commands";
 
@@ -44,10 +44,16 @@ const host: NastiIpcContract = {
   playback_cancel_preparation: args => command("playback_cancel_preparation", args),
 };
 
+export interface AppUpdater {
+  check(): Promise<AppUpdateStatus>;
+  install(args: AppUpdateInstallArgs): Promise<void>;
+}
+
 export interface TerminalConnection {
   ipc: NastiIpcContract;
   inlineVideo: HTMLVideoElement | null;
   youtube?: (request: YoutubeRequest) => Promise<YoutubeReply>;
+  updater?: AppUpdater;
   dispose: () => void;
 }
 
@@ -56,6 +62,10 @@ export async function openTerminal(): Promise<TerminalConnection> {
     ipc: host,
     inlineVideo: null,
     youtube: request => command("youtube_playlist_action", request),
+    updater: {
+      check: () => command("app_update_check"),
+      install: args => command("app_update_install", args),
+    },
     dispose: () => {},
   };
   const response = await fetch("/authorized-media/catalog.json");

@@ -193,6 +193,15 @@ export interface NastiIpcContract extends PlaybackController {
   lyrics_get_synced(args: { videoId: string }): Promise<LyricLine[]>;
 }
 
+export interface AppUpdateStatus {
+  currentVersion: string;
+  availableVersion?: string | null;
+}
+
+export interface AppUpdateInstallArgs {
+  version: string;
+}
+
 export type YoutubePrivacy = "private" | "public" | "unlisted";
 
 export interface YoutubeStatus {
