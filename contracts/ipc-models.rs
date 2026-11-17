@@ -374,6 +374,7 @@ pub enum YoutubeRequest {
         client_json: String,
     },
     Connect,
+    CancelConnect,
     Disconnect,
     Mine,
     Imported,

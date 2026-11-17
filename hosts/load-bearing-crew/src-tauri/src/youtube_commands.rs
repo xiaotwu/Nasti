@@ -6,7 +6,7 @@ use reqwest::Url;
 use std::path::Path;
 use std::time::Duration;
 use tauri::State;
-use tokio::sync::Mutex;
+use tokio::sync::{watch, Mutex};
 use uraniborg_core::{playlist_id, video_id, Library, YoutubeAccess, YoutubeApi, YoutubeError};
 
 pub(crate) struct YoutubeService(pub Result<YoutubeServices, String>);
@@ -14,6 +14,7 @@ pub(crate) struct YoutubeService(pub Result<YoutubeServices, String>);
 pub(crate) struct YoutubeServices {
     api: YoutubeApi,
     account: Mutex<Account>,
+    cancel_connect: watch::Sender<u64>,
 }
 
 struct Account {
@@ -66,6 +67,7 @@ impl YoutubeServices {
                 oauth: YoutubeOAuth::new(use_system_keychain, client_file, staging_dir)?,
                 channel: None,
             }),
+            cancel_connect: watch::channel(0).0,
         })
     }
 
@@ -166,6 +168,13 @@ impl YoutubeServices {
         request: YoutubeRequest,
         library: &Library,
     ) -> Result<YoutubeReply, String> {
+        // Cancellation must bypass the account lock held by a pending browser login.
+        if matches!(request, YoutubeRequest::CancelConnect) {
+            self.cancel_connect
+                .send_modify(|attempt| *attempt = attempt.wrapping_add(1));
+            return Ok(YoutubeReply::Done);
+        }
+        let mut cancellation = self.cancel_connect.subscribe();
         let mut account = self.account.lock().await;
         match request {
             YoutubeRequest::Status => {
@@ -184,11 +193,12 @@ impl YoutubeServices {
                 if self.authorize(library, &mut account).await?.is_some() {
                     return Ok(self.status(&account));
                 }
-                account.oauth.connect().await?;
+                account.oauth.connect(&mut cancellation).await?;
                 account.channel = None;
                 self.require_authorized(library, &mut account).await?;
                 Ok(self.status(&account))
             }
+            YoutubeRequest::CancelConnect => unreachable!("handled before the account lock"),
             YoutubeRequest::Disconnect => {
                 let revoked = account.oauth.disconnect().await;
                 if !account.oauth.has_session() {
@@ -395,7 +405,7 @@ fn connect_required(configured: bool) -> String {
     if configured {
         "请先在 YouTube Music 面板连接 Google 账号".into()
     } else {
-        "尚未配置 Google 桌面 OAuth 客户端".into()
+        "此版本尚未启用 Google 登录".into()
     }
 }
 
@@ -469,6 +479,39 @@ mod tests {
         for change in [edited, added, removed, moved] {
             assert!(change.is_visible_in(&playlist));
         }
+    }
+
+    #[tokio::test]
+    async fn cancellation_bypasses_the_account_lock_and_stops_a_queued_login() {
+        let folder = tempfile::tempdir().unwrap();
+        let catalog_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../assets/authorized-media");
+        let library = Library::open(
+            &folder.path().join("library.sqlite3"),
+            Arc::new(Catalog::load(&catalog_path).unwrap()),
+        )
+        .await
+        .unwrap();
+        let service =
+            YoutubeServices::new(false, &folder.path().join("absent.json"), folder.path()).unwrap();
+        let account = service.account.lock().await;
+        let mut pending = std::pin::pin!(service.run(YoutubeRequest::Connect, &library));
+        std::future::poll_fn(|context| {
+            assert!(std::future::Future::poll(pending.as_mut(), context).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        let cancelled = tokio::time::timeout(
+            Duration::from_secs(1),
+            service.run(YoutubeRequest::CancelConnect, &library),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(matches!(cancelled, YoutubeReply::Done));
+        drop(account);
+        assert_eq!(pending.await.unwrap_err(), "已取消 Google 登录");
+        assert!(!service.account.lock().await.oauth.has_session());
     }
 
     #[tokio::test]

@@ -168,9 +168,6 @@ class Terminal {
       () => this.renderOverview(), value => this.message(value), this.events.signal);
     this.shell.dataset.native = String(!connection.inlineVideo);
     element("search-sources").hidden = Boolean(connection.inlineVideo);
-    for (const entry of this.shell.querySelectorAll<HTMLElement>("[data-archive-entry]")) {
-      entry.hidden = Boolean(connection.inlineVideo);
-    }
     for (const control of this.shell.querySelectorAll<HTMLElement>("[data-youtube-entry]")) {
       control.hidden = !this.youtube;
     }
@@ -224,7 +221,6 @@ class Terminal {
       try {
         await Promise.all([sceneInit, this.reloadCatalog()]);
         loading.hidden = true;
-        this.renderFirstUse();
         if (!reopenSettings && !this.panel.open && document.activeElement === document.body) this.focusArchive();
       } catch {
         const retry = actionButton("restart", "retry-library", t("重新打开曲库", "Retry opening the library"));
@@ -389,9 +385,6 @@ class Terminal {
   private async handleAction(button: HTMLButtonElement): Promise<void> {
     switch (button.dataset.action) {
       case "search": return this.showPanel("search");
-      case "browse-archive":
-        this.setSearchSource("archive");
-        return this.showPanel("search");
       case "library": case "vault-drawer": return this.showPanel("library");
       case "import-playlist": return this.showPanel("import");
       case "youtube-playlists": if (this.youtube) return this.showPanel("youtube"); return;
@@ -712,7 +705,6 @@ class Terminal {
     }
     this.shell.dataset.mode = next;
     element("radar").hidden = next !== "radar-grid";
-    this.renderFirstUse();
     element("scene-caption").hidden = next !== "archive-array" || !this.inspected;
     element("archive-navigation").hidden = next !== "archive-array" || !this.inspected;
     const detailHidden = next !== "detail-extracted" || !this.inspected;
@@ -752,17 +744,8 @@ class Terminal {
     this.focusArchive();
   }
 
-  private renderFirstUse(): void {
-    const archiveVisible = this.mode === "archive-array" || (this.mode === "radar-grid" && this.sceneFailed);
-    element("first-use").hidden = !archiveVisible || !this.libraryReady || Boolean(this.inspected)
-      || !element("loading-status").hidden || this.panel.open;
-  }
-
   private focusArchive(): void {
-    const firstUse = element("first-use");
-    if (!firstUse.hidden) {
-      firstUse.querySelector<HTMLButtonElement>("button:not([hidden])")?.focus();
-    } else if (this.sceneFailed) element("radar").querySelector("button")?.focus();
+    if (this.sceneFailed) element("radar").querySelector("button")?.focus();
     else element("scene").querySelector<HTMLElement>("[tabindex]")?.focus();
   }
 
@@ -918,6 +901,7 @@ class Terminal {
   }
 
   private async showPanel(panel: Panel, reference?: string): Promise<void> {
+    if (panel !== "youtube") this.youtube?.cancelConnection();
     if (!this.panel.open) this.panelTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (panel === "search" && this.mode === "radar-grid" && !this.sceneFailed) this.setMode("archive-array");
     this.closeTransportMenu();
@@ -931,7 +915,6 @@ class Terminal {
     const titles = { search: t("检索曲库", "Search library"), library: t("离线储藏库", "Vault"), capacity: t("Vault 容量", "Vault storage"), import: t("导入歌单", "Import playlist"), settings: t("终端设置", "Settings"), youtube: "YouTube Music" };
     setText(element("panel-title"), titles[panel]);
     if (!this.panel.open) this.panel.show();
-    this.renderFirstUse();
     this.updatePower();
     if (panel === "search") {
       element("search-input").focus();
@@ -959,10 +942,9 @@ class Terminal {
     if (!this.panel.open) return;
     this.searchRequest++;
     this.panel.close();
+    this.youtube?.cancelConnection();
     delete this.shell.dataset.panel;
-    this.renderFirstUse();
-    if (this.panelTrigger?.closest("#first-use[hidden]")) this.focusArchive();
-    else this.panelTrigger?.focus({ preventScroll: true });
+    this.panelTrigger?.focus({ preventScroll: true });
     this.panelTrigger = null;
     this.updatePower();
   }

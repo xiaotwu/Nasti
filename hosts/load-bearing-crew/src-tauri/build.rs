@@ -1,4 +1,6 @@
 fn main() {
+    // The publisher supplies Nasti's public desktop client ID. Never embed a user's JSON/secret.
+    println!("cargo:rerun-if-env-changed=NASTI_APP_YOUTUBE_CLIENT_ID");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         for file in [
             "native/playback-outputs.h",

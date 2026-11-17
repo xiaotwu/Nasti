@@ -14,7 +14,6 @@ type Announcement = "pending" | "success" | "error";
 type DataReply = Exclude<YoutubeReply, { kind: "done" }>;
 type ReplyValue<K extends DataReply["kind"]> = Extract<DataReply, { kind: K }>["value"];
 type Confirmation = { request: YoutubeRequest; caption: string; trigger: HTMLButtonElement };
-const maxClientFileBytes = 64 * 1024;
 const privacyLabels: Record<YoutubePrivacy, readonly [string, string]> = {
   private: ["私密", "Private"], public: ["公开", "Public"], unlisted: ["不公开", "Unlisted"],
 };
@@ -27,8 +26,7 @@ export class YoutubePanel {
   private readonly importForm = element<HTMLFormElement>("youtube-import");
   private readonly input = element<HTMLInputElement>("youtube-reference");
   private readonly connect = this.control("connect");
-  private readonly configure = this.control("configure-client");
-  private readonly clientFile = element<HTMLInputElement>("youtube-client-file");
+  private readonly cancelConnect = element<HTMLButtonElement>("youtube-cancel-connect");
   private readonly retry = this.control("retry");
   private account: YoutubeStatus | null = null;
   private source: ListSource = "imported";
@@ -39,6 +37,7 @@ export class YoutubePanel {
   private menu: Disclosure | null = null;
   private adding = false;
   private nextFocus: HTMLElement | null = null;
+  private connecting = false;
 
   constructor(
     private readonly invoke: (request: YoutubeRequest) => Promise<YoutubeReply>,
@@ -50,11 +49,8 @@ export class YoutubePanel {
       if (button && !button.disabled && !this.controls.disabled) this.handle(button);
       else if (!event.target.closest(".youtube-disclosure")) this.setMenu(null);
     }, { signal });
-    this.clientFile.addEventListener("change", () => {
-      const file = this.clientFile.files?.[0];
-      this.clientFile.value = "";
-      if (file) void this.configureClient(file);
-    }, { signal });
+    this.cancelConnect.addEventListener("click", () => this.cancelConnection(), { signal });
+    signal.addEventListener("abort", () => this.cancelConnection(), { once: true });
     this.importForm.addEventListener("submit", event => {
       event.preventDefault();
       void this.import(this.input.value);
@@ -107,12 +103,16 @@ export class YoutubePanel {
       this.retry.hidden = loaded;
       this.renderAccount();
       if (this.selected) this.focus(element("youtube-title"));
-      else if (!element("youtube-client-setup").hidden) this.focus(this.configure);
+      else if (!this.connect.hidden && this.connect.disabled) this.focus(element("youtube-signin-help"));
       else this.focus(this.connect.hidden ? this.input : this.connect);
     });
   }
 
   dismiss(): boolean {
+    if (this.connecting) {
+      this.cancelConnection();
+      return true;
+    }
     if (this.confirmation) {
       const { trigger } = this.confirmation;
       this.confirmation = null;
@@ -216,7 +216,6 @@ export class YoutubePanel {
     this.setMenu(null);
     switch (action) {
       case "retry": void this.show(); return;
-      case "configure-client": this.clientFile.click(); return;
       case "connect": void this.connectAccount(); return;
       case "disconnect": this.askConfirmation(
         { action }, t("撤销授权并移除这个账号的本地歌单记录？", "Revoke access and remove this account’s local playlist records?"), trigger,
@@ -273,31 +272,37 @@ export class YoutubePanel {
     }
   }
 
-  private async configureClient(file: File): Promise<void> {
-    if (this.controls.disabled || element("youtube-client-setup").hidden) return;
-    if (file.size > maxClientFileBytes) {
-      this.announce(t("客户端 JSON 文件不能超过 64 KiB。", "The client JSON file must be 64 KiB or smaller."), "error");
-      this.focus(this.configure);
-      return;
-    }
-    await this.run(async () => {
-      this.account = await this.request({ action: "configureClient", clientJson: await file.text() }, "status");
-      this.renderAccount();
-      this.nextFocus = this.connect.hidden ? this.input : this.connect;
-    }, t("正在读取客户端配置…", "Reading client configuration…"),
-    t("客户端配置已保存。现在可以连接 Google 账号。", "Client settings saved. You can now connect your Google account."),
-    ["无法加载客户端配置，请选择桌面应用的 OAuth JSON 文件。", "Could not load the client settings. Choose the Desktop app OAuth JSON file."]);
+  cancelConnection(): void {
+    if (!this.connecting || this.cancelConnect.disabled) return;
+    this.cancelConnect.disabled = true;
+    void this.complete({ action: "cancelConnect" }).catch(error => {
+      this.cancelConnect.disabled = false;
+      this.announce(localizeError(error, "取消登录失败，请重试", "Could not cancel sign-in. Try again."), "error");
+    });
   }
 
   private async connectAccount(): Promise<void> {
-    await this.run(async () => {
-      this.account = await this.request({ action: "connect" }, "status");
-      this.renderAccount();
-      if (!this.account.connected) throw new Error(t("尚未连接 YouTube，请重试", "Could not connect to YouTube. Try again."));
-      const pendingImport = Boolean(this.input.value.trim());
-      await this.loadList(pendingImport ? "imported" : "mine");
-      this.nextFocus = this.selected ? element("youtube-title") : pendingImport ? this.input : this.control("mine");
-    }, t("请在系统浏览器完成 YouTube 授权", "Complete YouTube authorization in your browser"), t("已连接 YouTube", "Connected to YouTube"));
+    if (this.controls.disabled || !this.account?.canConnect) return;
+    this.connecting = true;
+    this.cancelConnect.disabled = false;
+    this.cancelConnect.hidden = false;
+    try {
+      const pending = this.run(async () => {
+        this.account = await this.request({ action: "connect" }, "status");
+        this.renderAccount();
+        if (!this.account.connected) throw new Error(t("尚未连接 YouTube，请重试", "Could not connect to YouTube. Try again."));
+        const pendingImport = Boolean(this.input.value.trim());
+        await this.loadList(pendingImport ? "imported" : "mine");
+        this.nextFocus = this.selected ? element("youtube-title") : pendingImport ? this.input : this.control("mine");
+      }, t("请在系统浏览器完成 Google 授权，完成后返回 Nasti。", "Authorize with Google in your system browser, then return to Nasti."), t("已连接 YouTube", "Connected to YouTube"));
+      this.focus(this.cancelConnect);
+      await pending;
+    } finally {
+      const restoreFocus = document.activeElement === this.cancelConnect;
+      this.connecting = false;
+      this.cancelConnect.hidden = true;
+      if (restoreFocus) this.focus(this.connect);
+    }
   }
 
   private async loadList(source: ListSource): Promise<void> {
@@ -534,24 +539,28 @@ export class YoutubePanel {
 
   private renderAccount(): void {
     const status = this.account;
-    this.renderClientSetup();
-    this.connect.hidden = !status?.canConnect || status.connected;
+    this.renderSignin();
+    this.connect.hidden = !status || status.connected;
+    this.connect.disabled = !status?.canConnect;
     element("youtube-account-tools").hidden = !status?.connected;
     this.control("mine").hidden = this.control("create").hidden = !status?.connected;
     this.importForm.querySelector("button")!.disabled = !status?.connected;
     if (this.selected) this.showPlaylist(this.selected);
   }
 
-  private renderClientSetup(): void {
+  private renderSignin(): void {
     const status = this.account;
-    element("youtube-client-setup").hidden = !status || status.canConnect || status.connected
-      || Boolean(this.selected || this.confirmation || this.editing);
+    const help = element("youtube-signin-help");
+    help.hidden = !status || status.connected || Boolean(this.selected || this.confirmation || this.editing);
+    setText(help, status?.canConnect
+      ? t("将在系统浏览器中授权，完成后返回 Nasti。", "Your system browser will open for authorization. Return to Nasti when finished.")
+      : t("此版本尚未启用 Google 登录。", "Google sign-in is not available in this build."));
   }
 
   private renderView(): void {
     const overlay = Boolean(this.confirmation || this.editing);
     element("youtube-navigation").hidden = Boolean(this.selected) || overlay;
-    this.renderClientSetup();
+    this.renderSignin();
     const add = this.control("add-song");
     const adding = this.adding && !add.hidden && Boolean(this.selected) && !overlay;
     element("youtube-add").hidden = !adding;

@@ -234,6 +234,7 @@ export type YoutubeRequest =
   | { action: "status" }
   | { action: "configureClient"; clientJson: string }
   | { action: "connect" }
+  | { action: "cancelConnect" }
   | { action: "disconnect" }
   | { action: "mine" }
   | { action: "imported" }
