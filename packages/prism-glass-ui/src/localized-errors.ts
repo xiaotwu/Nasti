@@ -3,6 +3,14 @@ import { t } from "./i18n";
 // The desktop commands and browser mock return strings today. Translate their stable
 // message text at the UI boundary, keeping operating-system and service prose out of it.
 const messages = new Map<string, string>([
+  ["更新包的签名或签名版本无效", "The update signature or signed version is invalid."],
+  ["更新包未通过 Nasti Developer ID 签名校验", "The update did not pass Nasti Developer ID verification."],
+  ["macOS 未接受此更新包", "macOS rejected this update."],
+  ["请先用 DMG 将 Nasti 安装到应用程序文件夹", "Install Nasti in Applications from the DMG before updating."],
+  ["当前安装与更新工作目录不在同一磁盘。请使用 DMG 更新", "Use the DMG to update this installation across volumes."],
+  ["无法替换当前 Nasti。请用 DMG 更新后重新打开", "Could not replace Nasti. Use the DMG to update and reopen it."],
+  ["更新已安装，请重新打开 Nasti", "Update installed. Reopen Nasti to continue."],
+  ["GitHub 暂时限制更新请求，请稍后重试", "GitHub temporarily limited update requests. Try again later."],
   ["授权曲库暂时无法打开", "The authorized library could not be opened."],
   ["授权媒体暂时无法准备", "The authorized media could not be prepared."],
   ["此版本没有可播放的授权文件", "This version has no authorized file to play."],
