@@ -50,7 +50,6 @@ h1, h2 { line-height: 1.17; letter-spacing: -.033em; }
 .search-trigger, .theme-toggle {
   display: inline-flex;
   align-items: center;
-  justify-content: space-between;
   border: 1px solid var(--border);
   background: var(--surface);
   border-radius: 9px;
@@ -59,13 +58,13 @@ h1, h2 { line-height: 1.17; letter-spacing: -.033em; }
   white-space: nowrap;
   font-size: .85rem;
 }
-.search-trigger { gap: 16px; min-width: 170px; }
+.search-trigger { justify-content: space-between; gap: 16px; min-width: 170px; }
 .search-trigger span::before { content: "⌕"; font-size: 1.12em; margin-inline-end: 7px; }
 .search-trigger kbd { font: inherit; font-size: .75rem; }
-.theme-toggle { border-radius: 20px; padding-inline: 11px; }
 .theme-toggle, .top-nav .icon-link {
   display: inline-grid;
   flex: none;
+  place-content: center;
   place-items: center;
   width: 35px;
   height: 35px;

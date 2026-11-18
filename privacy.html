@@ -50,7 +50,8 @@
       </details>
       <p>This policy explains how Nasti handles information when you use the macOS app or visit its GitHub Pages website. Nasti is maintained by <a href="https://github.com/xiaotwu">Tony (@xiaotwu)</a>. You can use the local library, licensed Internet Archive catalog, and Vault without connecting a Google account.</p>
 <h2 id="google-and-youtube-data">Google and YouTube data</h2>
-<p>Nasti uses YouTube API Services for its optional YouTube Music playlist panel. Before connecting, you can review this policy and the Nasti Terms of Use. Google then opens in your system browser and handles account selection, sign-in, and consent. After you grant permission, Google returns an authorization code to Nasti on your Mac. Nasti exchanges that code for OAuth tokens. Nasti does not receive your Google password or browser session cookies, and it does not request your Google email address or profile.</p>
+<p>Nasti uses YouTube API Services for its optional YouTube Music playlist panel. In releases that enable Google sign-in, the panel asks you to review and agree to this policy and the <a href="./terms.html">Nasti Terms of Use</a> before making YouTube API requests. You then choose whether to grant Nasti access on Google’s consent screen in your system browser. If you decline, the local library, licensed catalog and Vault are still available.</p>
+<p>After you grant permission, Google returns a short-lived authorization code directly to Nasti on your Mac. Nasti uses that code for a one-time OAuth token exchange. Nasti does not request your Google email address or profile, receive your Google password, or access your browser’s Google session cookies.</p>
 <p>Nasti receives the following data from Google and YouTube.</p>
 <ul>
 <li><strong>Authorization data.</strong> The authorization code and OAuth tokens allow Nasti to make YouTube API requests on your behalf.</li>
@@ -59,11 +60,15 @@
 <li><strong>Playlist entries.</strong> Nasti uses entry and video identifiers, titles, creator information, and track order to display a playlist, open tracks in YouTube Music, or apply the edits you choose.</li>
 </ul>
 <h2 id="why-nasti-requests-access">Why Nasti requests access</h2>
-<p>Nasti requests the <code>youtube.force-ssl</code> OAuth scope because the YouTube API requires write permission to edit playlists. Google describes the scope broadly. Nasti uses it to identify your YouTube channel, read and display playlists, and carry out the playlist actions you initiate. These actions include creating a playlist, editing its details or visibility, adding or removing entries, reordering tracks, and deleting a playlist. YouTube applies changes to the account connected in Nasti.</p>
+<p>Nasti requests <code>https://www.googleapis.com/auth/youtube.force-ssl</code> because YouTube requires write access to edit playlists. The Google consent screen describes a broader permission than playlist editing. Nasti uses it for channel lookup, playlist reads and the playlist changes you initiate. These include creating a playlist, editing its details or visibility, adding or removing entries, reordering tracks, and deleting a playlist. Nasti does not use the permission to edit or delete videos, ratings, comments or captions.</p>
 <p>Nasti’s use of information received from Google APIs follows the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including its Limited Use requirements. Nasti uses this data for the playlist features described here. Nasti does not sell Google user data or use it for advertising, profiling, analytics, or AI training.</p>
 <h2 id="storage-and-protection">Storage and protection</h2>
-<p>Nasti sends requests to Google and YouTube over HTTPS. The authorization callback stays on your Mac and uses PKCE to protect the code exchange. The app holds short-lived access tokens in memory. On macOS, it uses Keychain to retain the refresh token so it can reconnect when you return to the playlist panel.</p>
-<p>If you import a playlist, Nasti stores a snapshot in its SQLite library on your Mac, together with the associated channel identifier and the time it was saved. After 30 days without a refresh, Nasti removes the snapshot when it next opens the library or reads the saved playlist records. If Nasti detects that your Google grant is invalid, it removes your account’s saved snapshots and attempts to remove the unusable token from Keychain.</p>
+<p>Nasti sends requests to Google and YouTube over HTTPS. The authorization callback stays on your Mac and uses PKCE to protect the token exchange.</p>
+<ul>
+<li><strong>Authorization code.</strong> Nasti uses the code in the token exchange and does not save it to the local library.</li>
+<li><strong>Access and refresh tokens.</strong> Nasti keeps short-lived access tokens in memory and uses macOS Keychain to retain the refresh token for reconnecting. It removes the refresh token after successful revocation or tries to remove it when Google reports that the grant is invalid.</li>
+<li><strong>Saved playlist snapshots.</strong> An import stores playlist details and entries in Nasti’s SQLite library on your Mac, with the associated channel identifier and the save or refresh time. Imports do not download YouTube recordings. Nasti removes snapshots that have gone 30 days without a refresh the next time it opens the library or reads the saved records.</li>
+</ul>
 <p>Nasti stores your local library, Vault copies of eligible recordings, and app preferences on your Mac. The app also keeps a local record of your acceptance of this policy for the YouTube Music feature.</p>
 <h2 id="sharing-and-service-providers">Sharing and service providers</h2>
 <ul>
@@ -71,13 +76,13 @@
 <li><strong>GitHub</strong> hosts this website and the app’s releases. The app contacts GitHub when you check for or download an update. GitHub handles requests to these services under its <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">privacy statement</a>.</li>
 <li><strong>Internet Archive</strong> receives search queries, item requests, and download or playback requests when you use its catalog. See the <a href="https://archive.org/about/terms.php">Internet Archive terms and privacy policy</a>.</li>
 </ul>
-<p>Nasti has no app server that receives Google tokens or playlist snapshots. It does not send them to GitHub or Internet Archive.</p>
+<p>Nasti has no app server that receives Google tokens or playlist snapshots. The app sends authorization data and the playlist data needed for the requested action directly to Google and YouTube. It shares the relevant playlist or video identifier with your browser when you open a YouTube Music link. It does not send Google user data to GitHub, Internet Archive, or advertising or analytics providers.</p>
 <p>This website stores the theme you select in your browser. Site search runs in your browser and does not send your search terms to Nasti. Nasti does not add advertising or analytics scripts to this website.</p>
 <h2 id="delete-records-or-revoke-access">Delete records or revoke access</h2>
 <ol>
 <li>To delete one local playlist record, choose <strong>Remove local snapshot</strong> in the YouTube Music panel. The playlist remains on YouTube.</li>
 <li>To stop Nasti’s access and remove the saved account data, choose <strong>Revoke access</strong> in the panel’s Google account menu. Nasti asks Google to revoke the grant and removes the account’s token and local snapshots when revocation succeeds.</li>
-<li>You can also revoke Nasti’s access in your <a href="https://security.google.com/settings/security/permissions">Google Account security settings</a>. Nasti clears the associated local snapshots when it next detects the invalid grant.</li>
+<li>If Nasti cannot reach Google to complete revocation, retry once you are online. You can also revoke access in your <a href="https://security.google.com/settings/security/permissions">Google Account security settings</a>. Then reopen Nasti’s YouTube Music panel while online so it can check the grant and clear the associated local snapshots when it detects that access is invalid.</li>
 </ol>
 <p>The separate <strong>Delete online playlist</strong> action removes the selected playlist from YouTube. Removing a local Vault copy frees space on your Mac.</p>
 <h2 id="contact-and-policy-updates">Contact and policy updates</h2>

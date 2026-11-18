@@ -47,7 +47,8 @@
 <li><a href="#contact-and-policy-updates">联系方式与政策更新</a></li></ul></details>
       <p>本政策说明你使用 Nasti macOS 应用或访问其 GitHub Pages 网站时，Nasti 如何处理信息。Nasti 由 <a href="https://github.com/xiaotwu">Tony（@xiaotwu）</a>维护。你无需连接 Google 账号，即可使用本地曲库、Internet Archive 授权目录和离线储藏库（Vault）。</p>
 <h2 id="google-and-youtube-data">Google 和 YouTube 数据</h2>
-<p>Nasti 的可选 YouTube Music 歌单面板使用 YouTube API 服务。连接账号前，你可以阅读本政策和 Nasti 使用条款。连接时，Nasti 在系统浏览器中打开 Google，由 Google 处理账号选择、登录和同意授权。你授权后，Google 将授权码返回到 Mac 上运行的 Nasti。Nasti 使用该授权码换取 OAuth 令牌。Nasti 不接收你的 Google 密码或浏览器会话 Cookie，也不请求你的 Google 电子邮箱地址或个人资料。</p>
+<p>Nasti 的可选 YouTube Music 歌单面板使用 YouTube API 服务。在启用 Google 登录的版本中，面板会请你阅读并同意本政策与 <a href="./terms.html">Nasti 使用条款</a>，然后才会向 YouTube API 发送请求。接下来，你可在系统浏览器打开的 Google 同意页面单独决定是否授权 Nasti。如果拒绝，本地曲库、授权目录和离线储藏库仍可使用。</p>
+<p>你授权后，Google 会将短期有效的授权码返回到你的 Mac。Nasti 仅用它换取一次 OAuth 令牌。Nasti 不请求你的 Google 邮箱或个人资料，也不会接收 Google 密码或访问浏览器中的 Google 会话 Cookie。</p>
 <p>Nasti 从 Google 和 YouTube 接收以下数据。</p>
 <ul>
 <li><strong>授权数据。</strong> Nasti 使用授权码和 OAuth 令牌，在你的授权范围内向 YouTube API 发出请求。</li>
@@ -56,11 +57,15 @@
 <li><strong>歌单条目。</strong> Nasti 使用条目和视频标识符、标题、创作者信息及曲序来显示歌单、在 YouTube Music 中打开曲目，或执行你选择的编辑操作。</li>
 </ul>
 <h2 id="why-nasti-requests-access">Nasti 请求访问权限的原因</h2>
-<p>YouTube API 要求拥有写入权限才能编辑歌单，因此 Nasti 请求 <code>youtube.force-ssl</code> OAuth 权限范围。Google 对此权限范围的描述涵盖更广。Nasti 使用该权限识别你的 YouTube 频道，读取和显示歌单，并执行你发起的歌单操作，包括创建歌单、编辑详情或可见性、添加或移除条目、调整曲序，以及删除歌单。YouTube 会对在 Nasti 中连接的账号应用这些更改。</p>
+<p>YouTube 要求拥有写入权限才能编辑歌单，因此 Nasti 请求 <code>https://www.googleapis.com/auth/youtube.force-ssl</code>。Google 同意页面列出的权限范围比歌单编辑更广。Nasti 用它查询频道、读取歌单并执行你发起的更改，包括创建歌单、编辑详情或可见性、添加或移除条目、调整曲序，以及删除歌单。Nasti 不使用该权限编辑或删除视频、评分、评论或字幕。</p>
 <p>Nasti 对通过 Google API 获得的信息的使用遵守 <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API 服务用户数据政策</a>，包括其中的「有限使用」要求。Nasti 将这些数据用于本政策所述的歌单功能。Nasti 不出售 Google 用户数据，也不将其用于广告、用户画像、分析或 AI 训练。</p>
 <h2 id="storage-and-protection">存储和保护</h2>
-<p>Nasti 通过 HTTPS 向 Google 和 YouTube 发送请求。授权回调在你的 Mac 上完成，Nasti 使用 PKCE 保护授权码的交换过程。应用将短期访问令牌保存在内存中，并通过 macOS 钥匙串保存刷新令牌，以便你返回歌单面板时重新连接。</p>
-<p>导入歌单时，Nasti 会将歌单快照、关联的频道标识符和保存时间写入 Mac 上的 SQLite 曲库。快照连续 30 天未刷新后，Nasti 会在下次打开曲库或读取已保存的歌单记录时移除该快照。如果 Nasti 检测到 Google 授权已失效，会移除该账号的已保存快照，并尝试从钥匙串中删除失效令牌。</p>
+<p>Nasti 通过 HTTPS 向 Google 和 YouTube 发送请求。授权回调在你的 Mac 上完成，Nasti 使用 PKCE 保护令牌交换。</p>
+<ul>
+<li><strong>授权码。</strong> 只用于交换令牌，不保存到本地曲库。</li>
+<li><strong>访问令牌和刷新令牌。</strong> Nasti 将短期访问令牌保存在内存中，并通过 macOS 钥匙串保存刷新令牌，用于重新连接。撤销授权成功后会移除刷新令牌。如果 Google 报告授权无效，Nasti 会尝试移除失效的令牌。</li>
+<li><strong>已保存的歌单快照。</strong> 导入歌单时，Nasti 将歌单详情、条目、关联的频道标识符和保存或刷新时间写入 Mac 上的 SQLite 曲库。导入并不下载 YouTube 录音。连续 30 天未刷新的快照会在下次打开曲库或读取已保存的歌单记录时移除。</li>
+</ul>
 <p>Nasti 将本地曲库、Vault 中符合条件的录音副本以及应用偏好保存在你的 Mac 上。应用还会在本机记录你是否已同意适用于 YouTube Music 功能的本政策。</p>
 <h2 id="sharing-and-service-providers">数据共享与服务提供方</h2>
 <ul>
@@ -68,13 +73,13 @@
 <li><strong>GitHub</strong> 托管本网站及应用发行文件。检查或下载更新时，应用会连接 GitHub。GitHub 按其<a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">隐私声明</a>处理对这些服务的请求。</li>
 <li><strong>Internet Archive</strong> 在你使用其目录时接收搜索查询、条目请求，以及下载或播放请求。请参阅 <a href="https://archive.org/about/terms.php">Internet Archive 使用条款与隐私政策</a>。</li>
 </ul>
-<p>Nasti 没有接收 Google 令牌或歌单快照的应用服务器，也不会将这些数据发送给 GitHub 或 Internet Archive。</p>
+<p>Nasti 没有接收 Google 令牌或歌单快照的应用服务器。授权数据和执行所选操作所需的歌单数据由应用直接发送给 Google 和 YouTube。打开 YouTube Music 链接时，应用把对应的歌单或视频标识符交给浏览器。Nasti 不会将 Google 用户数据发送给 GitHub、Internet Archive、广告或分析服务提供方。</p>
 <p>本网站在你的浏览器中保存所选主题。站内搜索在浏览器中运行，搜索词不会发送给 Nasti。Nasti 未在本网站添加广告或分析脚本。</p>
 <h2 id="delete-records-or-revoke-access">删除记录或撤销授权</h2>
 <ol>
 <li>如需删除一条本地歌单记录，在 YouTube Music 面板选择<strong>移除本地记录</strong>。该歌单仍保留在 YouTube 上。</li>
 <li>如需停止 Nasti 访问并移除已保存的账号数据，在面板的 Google 账号菜单中选择<strong>撤销授权</strong>。Nasti 会请求 Google 撤销授权，并在撤销成功时移除该账号的令牌和本地快照。</li>
-<li>你也可以在 <a href="https://security.google.com/settings/security/permissions">Google 账号安全设置</a>中撤销 Nasti 的访问权限。Nasti 会在下次检测到授权失效时清除关联的本地快照。</li>
+<li>如果 Nasti 无法连接 Google 并完成撤销，请在联网后重试。你也可以在 <a href="https://security.google.com/settings/security/permissions">Google 账号安全设置</a>中撤销。随后联网并重新打开 Nasti 的 YouTube Music 面板，让应用检查授权。检测到授权失效后，Nasti 会清除关联的本地快照。</li>
 </ol>
 <p>如需从 YouTube 删除所选歌单，使用单独的<strong>删除在线歌单</strong>操作。移除 Vault 中的本地副本可释放 Mac 上的存储空间。</p>
 <h2 id="contact-and-policy-updates">联系方式与政策更新</h2>
@@ -92,7 +97,7 @@
   </main>
   <footer class="site-footer">
     <div class="frame footer-inner">
-      <p>Nasti <span class="footer-divider" aria-hidden="true">/</span> Maintained by <a href="https://github.com/xiaotwu">Tony</a></p>
+      <p>Nasti <span class="footer-divider" aria-hidden="true">/</span> 维护者 <a href="https://github.com/xiaotwu">Tony</a></p>
       <nav aria-label="页脚">
         <a href="./privacy.html" aria-current="page">隐私政策</a>
         <a href="./terms.html">使用条款</a>
