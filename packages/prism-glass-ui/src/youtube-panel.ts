@@ -54,6 +54,17 @@ export class YoutubePanel {
   ) {
     this.root.addEventListener("click", event => {
       if (!(event.target instanceof Element)) return;
+      const link = event.target.closest<HTMLAnchorElement>("a[data-youtube-policy-page]");
+      if (link) {
+        event.preventDefault();
+        const page = link.dataset.youtubePolicyPage;
+        if (page === "privacy" || page === "nastiTerms" || page === "youtubeTerms") {
+          void this.complete({ action: "openPolicy", page }).catch(error => {
+            this.announce(localizeError(error, "无法打开文档", "Could not open the document"), "error");
+          });
+        }
+        return;
+      }
       const button = event.target.closest<HTMLButtonElement>("button[data-youtube-action]");
       if (button && !button.disabled && !this.controls.disabled) this.handle(button);
       else if (!event.target.closest(".youtube-disclosure")) this.setMenu(null);

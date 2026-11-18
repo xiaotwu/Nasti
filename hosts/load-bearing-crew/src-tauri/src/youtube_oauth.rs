@@ -587,7 +587,7 @@ pub(crate) fn open_external(url: &Url) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn launch_browser(url: &Url) -> Result<(), String> {
+pub(crate) fn launch_browser(url: &Url) -> Result<(), String> {
     use std::process::{Command, Stdio};
     let result = Command::new("/usr/bin/open")
         .arg(url.as_str())
@@ -601,7 +601,7 @@ fn launch_browser(url: &Url) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn launch_browser(url: &Url) -> Result<(), String> {
+pub(crate) fn launch_browser(url: &Url) -> Result<(), String> {
     use std::ptr::null;
     use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
     let operation = [b'o' as u16, b'p' as u16, b'e' as u16, b'n' as u16, 0];
@@ -622,7 +622,7 @@ fn launch_browser(url: &Url) -> Result<(), String> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn launch_browser(_: &Url) -> Result<(), String> {
+pub(crate) fn launch_browser(_: &Url) -> Result<(), String> {
     Err("此宿主尚未接入系统浏览器".into())
 }
 

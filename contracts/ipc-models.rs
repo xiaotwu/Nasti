@@ -363,6 +363,14 @@ pub struct YoutubePlaylist {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum YoutubePolicyPage {
+    Privacy,
+    NastiTerms,
+    YoutubeTerms,
+}
+
+#[derive(Deserialize)]
 #[serde(
     tag = "action",
     rename_all = "camelCase",
@@ -375,6 +383,9 @@ pub enum YoutubeRequest {
     },
     Connect,
     CancelConnect,
+    OpenPolicy {
+        page: YoutubePolicyPage,
+    },
     Disconnect,
     Mine,
     Imported,

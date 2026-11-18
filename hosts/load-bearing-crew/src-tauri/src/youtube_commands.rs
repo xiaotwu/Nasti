@@ -1,7 +1,8 @@
 use crate::models::{
-    YoutubePlaylist, YoutubePlaylistSummary, YoutubeReply, YoutubeRequest, YoutubeStatus,
+    YoutubePlaylist, YoutubePlaylistSummary, YoutubePolicyPage, YoutubeReply, YoutubeRequest,
+    YoutubeStatus,
 };
-use crate::youtube_oauth::{open_external, YoutubeOAuth};
+use crate::youtube_oauth::{launch_browser, open_external, YoutubeOAuth};
 use reqwest::Url;
 use std::path::Path;
 use std::time::Duration;
@@ -174,6 +175,15 @@ impl YoutubeServices {
                 .send_modify(|attempt| *attempt = attempt.wrapping_add(1));
             return Ok(YoutubeReply::Done);
         }
+        if let YoutubeRequest::OpenPolicy { page } = &request {
+            let url = match page {
+                YoutubePolicyPage::Privacy => "https://xiaotwu.github.io/Nasti/privacy.html",
+                YoutubePolicyPage::NastiTerms => "https://xiaotwu.github.io/Nasti/terms.html",
+                YoutubePolicyPage::YoutubeTerms => "https://www.youtube.com/t/terms",
+            };
+            launch_browser(&Url::parse(url).expect("static policy URL"))?;
+            return Ok(YoutubeReply::Done);
+        }
         let mut cancellation = self.cancel_connect.subscribe();
         let mut account = self.account.lock().await;
         match request {
@@ -198,7 +208,9 @@ impl YoutubeServices {
                 self.require_authorized(library, &mut account).await?;
                 Ok(self.status(&account))
             }
-            YoutubeRequest::CancelConnect => unreachable!("handled before the account lock"),
+            YoutubeRequest::CancelConnect | YoutubeRequest::OpenPolicy { .. } => {
+                unreachable!("handled before the account lock")
+            }
             YoutubeRequest::Disconnect => {
                 let revoked = account.oauth.disconnect().await;
                 if !account.oauth.has_session() {

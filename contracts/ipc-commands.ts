@@ -235,6 +235,7 @@ export type YoutubeRequest =
   | { action: "configureClient"; clientJson: string }
   | { action: "connect" }
   | { action: "cancelConnect" }
+  | { action: "openPolicy"; page: "privacy" | "nastiTerms" | "youtubeTerms" }
   | { action: "disconnect" }
   | { action: "mine" }
   | { action: "imported" }
