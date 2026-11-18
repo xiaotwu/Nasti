@@ -659,6 +659,18 @@ svg { display: block; width: 1em; height: 1em; }
   clip-path: inset(44% 74% 46.5% 7%);
   animation: boot-wordmark var(--boot-duration) ease-in-out both;
 }
+.boot-wordmark::after {
+  /* Align with the final I in the 1182 × 665 atlas frames. Mask out the caption below the rings. */
+  content: "";
+  position: absolute;
+  top: 44.81%;
+  left: 23.52%;
+  width: 1.95%;
+  aspect-ratio: 255 / 118;
+  background: var(--boot-ink);
+  -webkit-mask: url("/foundry-art/desktop/rhine-lab-mark-white.png") center top / 100% auto no-repeat;
+  mask: url("/foundry-art/desktop/rhine-lab-mark-white.png") center top / 100% auto no-repeat;
+}
 .boot-frame {
   position: absolute;
   inset: 0;
