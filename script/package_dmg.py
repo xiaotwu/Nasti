@@ -58,8 +58,8 @@ def main() -> None:
                 "icon_size": 112,
                 "grid_spacing": 86,
                 "text_size": 14,
+                # Keep Finder from writing extension flags onto the signed app.
                 "icon_locations": {"Nasti.app": (202, 395), "Applications": (518, 395)},
-                "hide_extensions": ["Nasti.app"],
             },
         )
 
