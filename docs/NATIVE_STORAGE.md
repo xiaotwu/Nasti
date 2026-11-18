@@ -11,6 +11,6 @@
 | `~/.nasti/tmp/<应用标识>/oauth/` | OAuth 客户端原子保存时的暂存位置。每个客户端输入限 64 KiB。 |
 | `~/.nasti/tmp/<应用标识>/updater/` | 更新解包与短时旧应用副本。安装工作目录按逻辑字节限 256 MiB，仅在独占安装锁内清理应用明确标记的过期暂存。 |
 
-曲库数据库、已存 Vault 媒体和 OAuth 配置继续使用应用原有数据目录。升级沿用应用标识与数据目录。系统 WebKit 缓存由 macOS 管理。开发验收的 `NASTI_DATA_DIR` 使用该隔离目录下的 `.nasti`。
+曲库数据库、已存 Vault 媒体和 OAuth 客户端配置继续使用应用原有数据目录。YouTube 歌单会话快照仅存在内存中，总上限为 16 MiB，达到上限时先移除最早导入的快照。升级沿用应用标识与数据目录。系统 WebKit 缓存由 macOS 管理。开发验收的 `NASTI_DATA_DIR` 使用该隔离目录下的 `.nasti`。
 
 发版时，对已签名、公证和附票的 `Nasti.app` 制作 `Nasti.app.tar.gz`。用保管在本机的更新私钥对归档签名并绑定 SemVer，上传 `Nasti.app.tar.gz`、`Nasti.app.tar.gz.sig` 及引用该标签资产的 `latest.json`。正式公开前验证清单、资产哈希、原图标和启动目录。在 GitHub 匿名下载验证更新后保留验收凭证。

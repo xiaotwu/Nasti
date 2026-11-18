@@ -18,6 +18,12 @@
 </p>
 
 <p align="center">
+  <a href="https://xiaotwu.github.io/Nasti/">Website / 官网</a>
+  ·
+  <a href="https://xiaotwu.github.io/Nasti/privacy.html">Privacy / 隐私</a>
+  ·
+  <a href="https://xiaotwu.github.io/Nasti/terms.html">Terms / 使用条款</a>
+  ·
   <a href="https://github.com/users/xiaotwu/projects/5/views/2">Roadmap / 开发进度</a>
   ·
   <a href="https://github.com/xiaotwu/Nasti/issues">Issues / 问题反馈</a>

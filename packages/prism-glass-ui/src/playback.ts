@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { language, t } from "./i18n";
 import { createMockIpc } from "../../../contracts/mock-ipc";
 import type {
@@ -53,6 +54,7 @@ export interface TerminalConnection {
   ipc: NastiIpcContract;
   inlineVideo: HTMLVideoElement | null;
   youtube?: (request: YoutubeRequest) => Promise<YoutubeReply>;
+  onYoutubeDataCleared?: (clear: () => void) => Promise<() => void>;
   updater?: AppUpdater;
   dispose: () => void;
 }
@@ -62,6 +64,7 @@ export async function openTerminal(): Promise<TerminalConnection> {
     ipc: host,
     inlineVideo: null,
     youtube: request => command("youtube_playlist_action", request),
+    onYoutubeDataCleared: clear => listen("youtube-session-cleared", clear),
     updater: {
       check: () => command("app_update_check"),
       install: args => command("app_update_install", args),

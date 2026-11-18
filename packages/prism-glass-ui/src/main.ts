@@ -160,7 +160,7 @@ class Terminal {
     this.ipc = connection.ipc;
     if (connection.updater) new SettingsUpdates(connection.updater, this.events.signal);
     this.outputs = new OutputPicker(this.ipc, this.events.signal);
-    this.youtube = connection.youtube ? new YoutubePanel(connection.youtube, this.events.signal) : null;
+    this.youtube = connection.youtube ? new YoutubePanel(connection.youtube, this.events.signal, connection.onYoutubeDataCleared) : null;
     this.library = new LibraryPanels(this.ipc, () => this.reloadCatalog(),
       track => this.playVaultTrack(track), value => this.message(value), this.events.signal,
       this.youtube ? reference => this.showPanel("youtube", reference) : undefined);

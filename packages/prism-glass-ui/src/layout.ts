@@ -288,16 +288,17 @@ export function mountLayout(root: HTMLElement): void {
                 </div>
               </div>
               <div id="youtube-policy" class="youtube-policy">
-                <p id="youtube-policy-summary">${t("Nasti 通过 YouTube API 访问你授权的歌单，并在本机保存你导入的歌单记录。", "Nasti uses YouTube API Services to access the playlists you authorize and saves imported playlist snapshots on this Mac.")}</p>
+                <p id="youtube-policy-summary">${t("Nasti 通过 YouTube API 访问你授权的歌单。导入的歌单仅在当前应用会话中保留。", "Nasti uses YouTube API Services to access the playlists you authorize. Imported playlists are kept for the current app session.")}</p>
                 <nav aria-label="${t("YouTube Music 隐私与条款", "YouTube Music privacy and terms")}">
                   <a href="https://xiaotwu.github.io/Nasti/privacy.html" data-youtube-policy-page="privacy">${t("隐私政策", "Privacy policy")}</a>
                   <a href="https://xiaotwu.github.io/Nasti/terms.html" data-youtube-policy-page="nastiTerms">${t("Nasti 使用条款", "Nasti terms of use")}</a>
                   <a href="https://www.youtube.com/t/terms" data-youtube-policy-page="youtubeTerms">${t("YouTube 服务条款", "YouTube Terms of Service")}</a>
+                  <a href="https://myaccount.google.com/permissions" data-youtube-policy-page="googlePermissions">${t("Google 账号权限", "Google account permissions")}</a>
                 </nav>
                 <button type="button" class="text-button" data-youtube-action="accept-policy" aria-describedby="youtube-policy-summary">${t("同意隐私政策及条款并继续", "Agree to privacy policy and terms")}</button>
               </div>
               <p id="youtube-signin-help" class="youtube-signin-help" tabindex="-1" hidden></p>
-              <form id="youtube-import" class="import-form">
+              <form id="youtube-import" autocomplete="off" class="import-form">
                 <label class="search-input">${icon("link")}<input id="youtube-reference" autocomplete="off" placeholder="${t("歌单链接或编号", "Playlist link or ID")}" aria-label="${t("YouTube Music 歌单链接或编号", "YouTube Music playlist link or ID")}" required></label>
                 <button type="submit" class="icon-button" aria-label="${t("导入歌单", "Import playlist")}" title="${t("导入歌单", "Import playlist")}">${icon("import")}</button>
               </form>
@@ -331,13 +332,13 @@ export function mountLayout(root: HTMLElement): void {
                   </div>
                 </div>
                 <p id="youtube-description"></p>
-                <form id="youtube-add" class="import-form" hidden>
+                <form id="youtube-add" autocomplete="off" class="import-form" hidden>
                   <label class="search-input">${icon("music")}<input id="youtube-song" autocomplete="off" placeholder="${t("歌曲链接或视频编号", "Track link or video ID")}" aria-label="${t("歌曲链接或视频编号", "Track link or video ID")}" required></label>
                   <button type="submit" class="icon-button" aria-label="${t("确认添加歌曲", "Confirm adding track")}" title="${t("确认添加歌曲", "Confirm adding track")}">${icon("check")}</button>
                 </form>
                 <ol id="youtube-tracks" aria-label="${t("歌单曲序", "Playlist order")}"></ol>
               </section>
-              <form id="youtube-edit" aria-labelledby="youtube-edit-title" hidden>
+              <form id="youtube-edit" autocomplete="off" aria-labelledby="youtube-edit-title" hidden>
                 <h3 id="youtube-edit-title"></h3>
                 <label>${t("名称", "Name")}<input id="youtube-name" autocomplete="off" maxlength="150" required></label>
                 <label>${t("简介", "Description")}<textarea id="youtube-note" maxlength="5000" rows="3"></textarea></label>
