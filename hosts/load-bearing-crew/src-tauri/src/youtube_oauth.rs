@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::watch;
 use uuid::Uuid;
 
 const CONSENT_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -21,6 +22,7 @@ const CALLBACK_LIMIT: usize = 8192;
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(180);
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(2);
 const CLIENT_FILE_LIMIT: u64 = 64 * 1024;
+const CANCELLED: &str = "已取消 Google 登录";
 
 pub(crate) struct YoutubeOAuth {
     client: Client,
@@ -64,6 +66,8 @@ struct TokenReply {
 #[derive(Deserialize)]
 struct OAuthError {
     error: String,
+    #[serde(rename = "error_description")]
+    description: Option<String>,
 }
 
 impl YoutubeOAuth {
@@ -149,18 +153,22 @@ impl YoutubeOAuth {
         self.access = None;
     }
 
-    pub(crate) async fn connect(&mut self) -> Result<(), String> {
-        self.connect_with(open_external).await
+    pub(crate) async fn connect(
+        &mut self,
+        cancellation: &mut watch::Receiver<u64>,
+    ) -> Result<(), String> {
+        self.connect_with(open_external, cancellation).await
     }
 
     async fn connect_with(
         &mut self,
         open: impl FnOnce(&Url) -> Result<(), String>,
+        cancellation: &mut watch::Receiver<u64>,
     ) -> Result<(), String> {
-        let config = self
-            .config
-            .as_ref()
-            .ok_or("尚未配置 Google 桌面 OAuth 客户端")?;
+        if cancellation.has_changed().unwrap_or(true) {
+            return Err(CANCELLED.into());
+        }
+        let config = self.config.as_ref().ok_or("此版本尚未启用 Google 登录")?;
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .map_err(|_| "无法打开本机授权回调".to_owned())?;
@@ -172,7 +180,13 @@ impl YoutubeOAuth {
         let state = Uuid::new_v4().simple().to_string();
         let browser_url = consent_url(&config.id, &redirect, &state, &verifier);
         open(&browser_url)?;
-        let code = receive_code(listener, &redirect, &state, Language::current()).await?;
+        // Cancellation drops the loopback listener. Once Google returns a code, finish the
+        // exchange and persistence together so a late cancellation cannot hide a stored grant.
+        let code = tokio::select! {
+            biased;
+            _ = cancellation.changed() => return Err(CANCELLED.into()),
+            code = receive_code(listener, &redirect, &state, Language::current()) => code?,
+        };
         let reply = self
             .request_tokens(
                 config,
@@ -330,6 +344,14 @@ impl YoutubeOAuth {
         }
         let error = response.json::<OAuthError>().await.ok();
         match error.as_ref().map(|failure| failure.error.as_str()) {
+            Some("invalid_request")
+                if error
+                    .as_ref()
+                    .and_then(|failure| failure.description.as_deref())
+                    .is_some_and(|description| description.contains("client_secret")) =>
+            {
+                Err("此版本缺少 Google 应用客户端凭据，请联系发布者".into())
+            }
             Some("invalid_grant") if status == StatusCode::BAD_REQUEST => Ok(None),
             Some("invalid_client" | "unauthorized_client") => {
                 Err("请检查 Google 桌面 OAuth 客户端配置".into())
@@ -349,8 +371,40 @@ impl DesktopClient {
         }
         match std::env::var_os("NASTI_YOUTUBE_CLIENT_FILE").filter(|path| !path.is_empty()) {
             Some(path) => Self::read_file(Path::new(&path), true),
-            None => Self::read_file(default_path, false),
+            None => match Self::read_file(default_path, false)? {
+                // Keep upgraded users on the client that owns their existing Keychain grant.
+                Some(client) => Ok(Some(client)),
+                None => Self::app_identity(
+                    option_env!("NASTI_APP_YOUTUBE_CLIENT_ID"),
+                    option_env!("NASTI_APP_YOUTUBE_CLIENT_SECRET"),
+                ),
+            },
         }
+    }
+
+    fn app_identity(id: Option<&str>, secret: Option<&str>) -> Result<Option<Self>, String> {
+        let Some(id) = id.map(str::trim).filter(|id| !id.is_empty()) else {
+            return Ok(None);
+        };
+        let valid = id
+            .strip_suffix(".apps.googleusercontent.com")
+            .is_some_and(|prefix| {
+                !prefix.is_empty()
+                    && prefix
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            });
+        if !valid {
+            return Err("此版本的 Google 登录配置无效，请联系发布者".into());
+        }
+        let secret = secret
+            .map(str::trim)
+            .filter(|secret| !secret.is_empty())
+            .ok_or("此版本缺少 Google 应用客户端凭据，请联系发布者")?;
+        Ok(Some(Self {
+            id: id.to_owned(),
+            secret: Some(secret.to_owned()),
+        }))
     }
 
     fn read_file(path: &Path, required: bool) -> Result<Option<Self>, String> {
@@ -533,7 +587,7 @@ pub(crate) fn open_external(url: &Url) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn launch_browser(url: &Url) -> Result<(), String> {
+pub(crate) fn launch_browser(url: &Url) -> Result<(), String> {
     use std::process::{Command, Stdio};
     let result = Command::new("/usr/bin/open")
         .arg(url.as_str())
@@ -547,7 +601,7 @@ fn launch_browser(url: &Url) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn launch_browser(url: &Url) -> Result<(), String> {
+pub(crate) fn launch_browser(url: &Url) -> Result<(), String> {
     use std::ptr::null;
     use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
     let operation = [b'o' as u16, b'p' as u16, b'e' as u16, b'n' as u16, 0];
@@ -568,7 +622,7 @@ fn launch_browser(url: &Url) -> Result<(), String> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn launch_browser(_: &Url) -> Result<(), String> {
+pub(crate) fn launch_browser(_: &Url) -> Result<(), String> {
     Err("此宿主尚未接入系统浏览器".into())
 }
 
@@ -712,46 +766,182 @@ mod tests {
         response: (&'static str, &'static str),
     ) -> (Result<(), String>, HashMap<String, String>) {
         let mut browser = None;
+        let (_cancel, mut cancellation) = watch::channel(0);
         let result = tokio::time::timeout(
             TEST_TIMEOUT,
-            oauth.connect_with(|consent| {
-                assert_eq!(consent.host_str(), Some("accounts.google.com"));
-                assert_eq!(consent.path(), "/o/oauth2/v2/auth");
-                let params: HashMap<_, _> = consent.query_pairs().into_owned().collect();
-                assert_eq!(params["client_id"], "desktop-client");
-                assert_eq!(params["scope"], PLAYLIST_SCOPE);
-                assert_eq!(params["access_type"], "offline");
-                assert_eq!(params["code_challenge_method"], "S256");
-                assert!(!params.contains_key("client_secret"));
-                let mut callback = Url::parse(&params["redirect_uri"]).unwrap();
-                assert_eq!(callback.host_str(), Some("127.0.0.1"));
-                callback
-                    .query_pairs_mut()
-                    .append_pair("state", &params["state"])
-                    .append_pair(response.0, response.1);
-                let task = tokio::spawn(async move {
-                    let reply = Client::builder()
-                        .no_proxy()
-                        .timeout(TEST_TIMEOUT)
-                        .build()
-                        .unwrap()
-                        .get(callback)
-                        .send()
-                        .await
-                        .unwrap();
-                    assert_eq!(reply.status(), StatusCode::OK);
-                    assert_eq!(reply.headers()["Cache-Control"], "no-store");
-                    assert!(!reply.text().await.unwrap().contains(response.1));
-                });
-                browser = Some((params, task));
-                Ok(())
-            }),
+            oauth.connect_with(
+                |consent| {
+                    assert_eq!(consent.host_str(), Some("accounts.google.com"));
+                    assert_eq!(consent.path(), "/o/oauth2/v2/auth");
+                    let params: HashMap<_, _> = consent.query_pairs().into_owned().collect();
+                    assert_eq!(params["client_id"], "desktop-client");
+                    assert_eq!(params["scope"], PLAYLIST_SCOPE);
+                    assert_eq!(params["access_type"], "offline");
+                    assert_eq!(params["code_challenge_method"], "S256");
+                    assert!(!params.contains_key("client_secret"));
+                    let mut callback = Url::parse(&params["redirect_uri"]).unwrap();
+                    assert_eq!(callback.host_str(), Some("127.0.0.1"));
+                    callback
+                        .query_pairs_mut()
+                        .append_pair("state", &params["state"])
+                        .append_pair(response.0, response.1);
+                    let task = tokio::spawn(async move {
+                        let reply = Client::builder()
+                            .no_proxy()
+                            .timeout(TEST_TIMEOUT)
+                            .build()
+                            .unwrap()
+                            .get(callback)
+                            .send()
+                            .await
+                            .unwrap();
+                        assert_eq!(reply.status(), StatusCode::OK);
+                        assert_eq!(reply.headers()["Cache-Control"], "no-store");
+                        assert!(!reply.text().await.unwrap().contains(response.1));
+                    });
+                    browser = Some((params, task));
+                    Ok(())
+                },
+                &mut cancellation,
+            ),
         )
         .await
         .unwrap();
         let (params, task) = browser.unwrap();
         task.await.unwrap();
         (result, params)
+    }
+
+    #[test]
+    fn publisher_identity_requires_both_application_credentials() {
+        assert!(DesktopClient::app_identity(None, None).unwrap().is_none());
+        assert!(DesktopClient::app_identity(Some("  "), None)
+            .unwrap()
+            .is_none());
+        assert!(DesktopClient::app_identity(Some("not-a-google-client"), Some("fixture")).is_err());
+        assert!(DesktopClient::app_identity(
+            Some("https://example.apps.googleusercontent.com"),
+            Some("fixture")
+        )
+        .is_err());
+        assert!(
+            DesktopClient::app_identity(Some("12345-nasti.apps.googleusercontent.com"), None)
+                .is_err()
+        );
+        let client = DesktopClient::app_identity(
+            Some(" 12345-nasti.apps.googleusercontent.com "),
+            Some(" fixture-application-secret "),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(client.id, "12345-nasti.apps.googleusercontent.com");
+        assert_eq!(client.secret.as_deref(), Some("fixture-application-secret"));
+    }
+
+    #[tokio::test]
+    async fn cancel_closes_the_loopback_and_allows_a_new_attempt() {
+        let (mut oauth, google) = mock_google(vec![("200 OK", FIRST_GRANT)]).await;
+        let (cancel, mut cancellation) = watch::channel(0);
+        let mut callback = None;
+        let error = oauth
+            .connect_with(
+                |consent| {
+                    callback = consent
+                        .query_pairs()
+                        .find(|(name, _)| name == "redirect_uri")
+                        .map(|(_, uri)| Url::parse(&uri).unwrap());
+                    cancel.send_replace(1);
+                    Ok(())
+                },
+                &mut cancellation,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error, CANCELLED);
+        let callback = callback.unwrap();
+        assert!(
+            TcpStream::connect((Ipv4Addr::LOCALHOST, callback.port().unwrap()))
+                .await
+                .is_err()
+        );
+        assert!(!oauth.has_session());
+        assert!(oauth.access_token().await.unwrap().is_none());
+
+        // A cancellation queued before browser launch must not open a stale login.
+        cancel.send_replace(2);
+        assert_eq!(
+            oauth
+                .connect_with(
+                    |_| panic!("canceled login opened a browser"),
+                    &mut cancellation
+                )
+                .await
+                .unwrap_err(),
+            CANCELLED
+        );
+
+        // A subsequent attempt receives a fresh subscription and a fresh PKCE challenge.
+        let (result, _) = connect_in_mock_browser(&mut oauth, ("code", "retry-code")).await;
+        result.unwrap();
+        assert!(oauth.has_session());
+        let requests = google.await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].form["code"], "retry-code");
+    }
+
+    #[tokio::test]
+    async fn legacy_secretless_configuration_omits_secret_and_keeps_pkce() {
+        let (mut oauth, google) = mock_google(vec![("200 OK", FIRST_GRANT)]).await;
+        oauth.config.as_mut().unwrap().secret = None;
+        let (result, _) = connect_in_mock_browser(&mut oauth, ("code", "public-client-code")).await;
+        result.unwrap();
+        let requests = google.await.unwrap();
+        assert!(!requests[0].form.contains_key("client_secret"));
+        assert!(requests[0].form.contains_key("code_verifier"));
+    }
+
+    #[tokio::test]
+    async fn missing_app_credentials_do_not_save_a_grant() {
+        let (mut oauth, google) = mock_google(vec![(
+            "400 Bad Request",
+            r#"{"error":"invalid_request","error_description":"client_secret is missing."}"#,
+        )])
+        .await;
+        let (result, _) = connect_in_mock_browser(&mut oauth, ("code", "test-code")).await;
+        assert_eq!(
+            result.unwrap_err(),
+            "此版本缺少 Google 应用客户端凭据，请联系发布者"
+        );
+        assert!(!oauth.has_session());
+        assert!(oauth.access_token().await.unwrap().is_none());
+        assert_eq!(google.await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn browser_launch_failure_leaves_no_listener_or_grant() {
+        let (mut oauth, google) = mock_google(Vec::new()).await;
+        let (_cancel, mut cancellation) = watch::channel(0);
+        let mut port = None;
+        let result = oauth
+            .connect_with(
+                |consent| {
+                    let redirect = consent
+                        .query_pairs()
+                        .find(|(name, _)| name == "redirect_uri")
+                        .unwrap()
+                        .1;
+                    port = Url::parse(&redirect).unwrap().port();
+                    Err("无法打开系统浏览器".into())
+                },
+                &mut cancellation,
+            )
+            .await;
+        assert_eq!(result.unwrap_err(), "无法打开系统浏览器");
+        assert!(TcpStream::connect((Ipv4Addr::LOCALHOST, port.unwrap()))
+            .await
+            .is_err());
+        assert!(!oauth.has_session());
+        assert!(google.await.unwrap().is_empty());
     }
 
     #[test]

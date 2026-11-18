@@ -217,6 +217,7 @@ mod github {
         releases
             .into_iter()
             .filter_map(|release| release.candidate())
+            .filter(|release| !current.pre.is_empty() || release.version.pre.is_empty())
             .filter(|release| release.version.cmp_precedence(current).is_gt())
             .max_by(|left, right| left.version.cmp_precedence(&right.version))
     }
@@ -391,6 +392,23 @@ mod github {
             assert!(
                 select_release(vec![release("v0.1.1-beta.1", false, true)], &current).is_none()
             );
+        }
+
+        #[test]
+        fn stable_channel_excludes_prereleases_and_is_newer_than_its_beta() {
+            let current = Version::parse("0.1.2").unwrap();
+            let selected = select_release(
+                vec![
+                    release("v0.1.3", false, false),
+                    release("v0.1.4-beta.1", false, true),
+                ],
+                &current,
+            )
+            .unwrap();
+            assert_eq!(selected.version.to_string(), "0.1.3");
+            let beta = Version::parse("0.1.2-beta.2").unwrap();
+            let stable = select_release(vec![release("v0.1.2", false, false)], &beta).unwrap();
+            assert_eq!(stable.version, current);
         }
 
         #[test]

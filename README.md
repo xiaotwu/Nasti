@@ -107,13 +107,11 @@
 
 ## Get Nasti / 下载与构建
 
-Download the Apple Silicon macOS prerelease from [GitHub Releases](https://github.com/xiaotwu/Nasti/releases). This is an empty-library build. Use Nasti's search to access the supported licensed Internet Archive catalog. YouTube Music playlist management requires your own OAuth configuration and opens playback externally.
+Download the latest Apple Silicon macOS build from GitHub Releases. Nasti starts with an empty archive, and the top bar opens the licensed catalog and playlist import. Where Google sign-in is available, authorize YouTube Music in your system browser and return to Nasti.
 
-从 [GitHub Releases](https://github.com/xiaotwu/Nasti/releases) 下载 Apple Silicon macOS 预发行版。首次打开时曲库为空。可从 Nasti 检索支持的 Internet Archive 授权目录。YouTube Music 歌单管理需要自行配置 OAuth，播放由 YouTube Music 打开。
+从 GitHub Releases 下载最新的 Apple Silicon macOS 版本。首次打开为空档案，从顶栏检索授权目录或导入歌单。Google 登录可用时，在 YouTube Music 面板阅读隐私政策和条款，再到系统浏览器登录并授权。
 
-从空曲库开始时，首页可直接打开授权曲库、导入歌单或进入 YouTube Music。使用 YouTube Music 前，在 Google Cloud 启用 [YouTube Data API v3](https://developers.google.com/youtube/data/guides/authentication) 并下载[桌面应用 OAuth 客户端 JSON](https://developers.google.com/identity/protocols/oauth2/native-app)，然后在 Nasti 导入面板选择文件并连接 Google。该文件只保存在本机。
-
-From the empty home screen, open the licensed catalog, import a playlist, or open YouTube Music. To use YouTube Music, enable the YouTube Data API v3, download a Desktop app OAuth client JSON from Google Cloud, select it in Nasti, and connect your account. The configuration stays on your Mac.
+[GitHub Releases](https://github.com/xiaotwu/Nasti/releases) · [Nasti 官网](https://xiaotwu.github.io/Nasti/) · [隐私政策](https://xiaotwu.github.io/Nasti/privacy.html) · [使用条款](https://xiaotwu.github.io/Nasti/terms.html)
 
 Build with Node, pnpm 11, Rust and Xcode. Run `pnpm install --frozen-lockfile` and then `pnpm --dir hosts/load-bearing-crew exec tauri build --bundles app`. See the [release fidelity specification](docs/RELEASE_FIDELITY_SPEC.md) and [third-party notices](NOTICE.md).
 

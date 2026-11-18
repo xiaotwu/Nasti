@@ -101,16 +101,6 @@ export function mountLayout(root: HTMLElement): void {
         </div>
       </section>
 
-      <section class="glass first-use-panel" id="first-use" aria-labelledby="first-use-title" hidden>
-        <h1 id="first-use-title">${t("添加第一张歌单", "Add your first playlist")}</h1>
-        <p data-archive-entry hidden>${t("从授权曲库添加曲目，即可在 Nasti 播放。", "Add tracks from the licensed catalog to play them in Nasti.")}</p>
-        <div class="first-use-actions">
-          <button class="text-button" type="button" data-action="browse-archive" data-archive-entry hidden>${icon("globe")}${t("搜索授权曲库", "Search licensed catalog")}</button>
-          <button class="text-button" type="button" data-action="import-playlist">${icon("import")}${t("导入歌单", "Import playlist")}</button>
-          <button class="text-button" type="button" data-action="youtube-playlists" data-youtube-entry hidden>${icon("music")}YouTube Music</button>
-        </div>
-      </section>
-
       <aside class="silhouette" id="companion" aria-hidden="true" hidden></aside>
       <section class="detail" id="detail" aria-label="${t("歌曲详情", "Track details")}" hidden>
         <div class="detail-inner" id="detail-inner">
@@ -284,10 +274,11 @@ export function mountLayout(root: HTMLElement): void {
           </section>
           <section id="youtube-panel" hidden>
             <p id="youtube-status" role="status" aria-live="polite"></p>
+            <button type="button" class="text-button" id="youtube-cancel-connect" hidden>${t("取消登录", "Cancel sign-in")}</button>
             <fieldset id="youtube-controls">
               <div id="youtube-navigation" class="youtube-toolbar">
                 ${button("back", "import-playlist", t("返回导入歌单", "Back to playlist import"))}
-                <button type="button" class="text-button" data-youtube-action="connect" hidden>${t("连接 Google 账号", "Connect Google account")}</button>
+                <button type="button" class="text-button" data-youtube-action="connect" aria-describedby="youtube-signin-help" hidden>${t("使用 Google 登录", "Sign in with Google")}</button>
                 ${youtubeButton("restart", "retry", t("重新读取账号和歌单", "Reload account and playlists"), "hidden")}
                 <div id="youtube-account-tools" class="youtube-disclosure" hidden>
                   ${youtubeButton("account", "account-menu", t("Google 账号", "Google account"), 'aria-expanded="false" aria-controls="youtube-account-menu"')}
@@ -296,15 +287,16 @@ export function mountLayout(root: HTMLElement): void {
                   </div>
                 </div>
               </div>
-              <section id="youtube-client-setup" class="youtube-client-setup" aria-labelledby="youtube-client-title" hidden>
-                <h3 id="youtube-client-title">${t("Google 桌面 OAuth 客户端", "Google desktop OAuth client")}</h3>
-                <p id="youtube-client-help">${t("在 Google Cloud 中启用 YouTube Data API v3，创建「桌面应用」OAuth 客户端并下载 JSON 文件。在这里选取文件，再连接 Google 账号。", "Enable YouTube Data API v3 in Google Cloud. Create a Desktop app OAuth client and download its JSON file. Choose that file here, then connect your Google account.")}</p>
-                <div>
-                  <button class="text-button" type="button" data-youtube-action="configure-client" aria-describedby="youtube-client-help">${t("选择客户端 JSON 文件", "Choose client JSON file")}</button>
-                  <a href="https://developers.google.com/youtube/data/guides/authentication" target="_blank" rel="noopener noreferrer">${t("Google 配置说明", "Google setup guide")}</a>
-                </div>
-                <input type="file" id="youtube-client-file" accept=".json,application/json" hidden>
-              </section>
+              <div id="youtube-policy" class="youtube-policy">
+                <p id="youtube-policy-summary">${t("Nasti 通过 YouTube API 访问你授权的歌单，并在本机保存你导入的歌单记录。", "Nasti uses YouTube API Services to access the playlists you authorize and saves imported playlist snapshots on this Mac.")}</p>
+                <nav aria-label="${t("YouTube Music 隐私与条款", "YouTube Music privacy and terms")}">
+                  <a href="https://xiaotwu.github.io/Nasti/privacy.html" data-youtube-policy-page="privacy">${t("隐私政策", "Privacy policy")}</a>
+                  <a href="https://xiaotwu.github.io/Nasti/terms.html" data-youtube-policy-page="nastiTerms">${t("Nasti 使用条款", "Nasti terms of use")}</a>
+                  <a href="https://www.youtube.com/t/terms" data-youtube-policy-page="youtubeTerms">${t("YouTube 服务条款", "YouTube Terms of Service")}</a>
+                </nav>
+                <button type="button" class="text-button" data-youtube-action="accept-policy" aria-describedby="youtube-policy-summary">${t("同意隐私政策及条款并继续", "Agree to privacy policy and terms")}</button>
+              </div>
+              <p id="youtube-signin-help" class="youtube-signin-help" tabindex="-1" hidden></p>
               <form id="youtube-import" class="import-form">
                 <label class="search-input">${icon("link")}<input id="youtube-reference" autocomplete="off" placeholder="${t("歌单链接或编号", "Playlist link or ID")}" aria-label="${t("YouTube Music 歌单链接或编号", "YouTube Music playlist link or ID")}" required></label>
                 <button type="submit" class="icon-button" aria-label="${t("导入歌单", "Import playlist")}" title="${t("导入歌单", "Import playlist")}">${icon("import")}</button>
