@@ -1,35 +1,34 @@
 import { createSkyframeScene } from "@nasti/skyframe-3d";
 import type {
-  MediaMode, NastiIpcContract, PlaybackSnapshot, PlaybackVideoFrame, PreparedPlayback,
+  MediaMode, PlaybackSnapshot, PlaybackVideoFrame, PreparedPlayback,
   PlaylistColumn, ThemeVariant, TrackItem,
 } from "../../../contracts/ipc-commands";
 import type { DetailSubTab, PlaylistOccurrence, SceneSelection, SceneViewMode } from "../../../contracts/scene-bridge";
 import { BootSequence } from "./boot";
-import { setIcon } from "./icons";
-import { dateLocale, language, localizeError, localizePlaylist, localizeTrack, matchesLocalizedCatalog, selectLanguage, t } from "./i18n";
+import { icon, setIcon, type IconName } from "./icons";
+import { language, localizeError, localizePlaylist, localizeTrack, selectLanguage, t } from "./i18n";
 import { durationLabel, element, mountLayout, safeAssetUrl, setText } from "./layout";
 import { LibraryPanels } from "./library-panels";
 import { installGlassMotion } from "./materials/glass";
 import { OutputPicker } from "./output-picker";
-import { initialPlayback, openTerminal, setDesktopLanguage, type TerminalConnection } from "./playback";
-import { PlaylistEditor } from "./playlist-editor";
+import { initialPlayback, openTerminal, setDesktopLanguage, type TerminalConnection, type TerminalIpc } from "./playback";
 import { SettingsNavigation, SettingsUpdates } from "./settings";
 import { type ShortcutAction } from "./shortcut-bindings";
 import { ApplicationShortcuts } from "./shortcuts";
 import { nextRepeatMode, occurrenceId, repeatMode, TrackNavigation } from "./track-navigation";
-import { actionButton, empty, LyricsView, makeArchiveResult, makeOverviewPlaylist, makePlaylistRow, makeTrackRow, SpectrumView, trackArtists } from "./views";
+import { actionButton, empty, LyricsView, makeOverviewPlaylist, makePlaylistRow, makeTrackRow, SpectrumView, trackArtists } from "./views";
 import { bindVolumeRanges } from "./volume-range";
-import { YoutubePanel } from "./youtube-panel";
+import { playlistReference, YoutubePanel, type ToastLevel } from "./youtube-panel";
 import "./styles.css";
 import "./archive-navigation.css";
 import "./transport.css";
 
 type Location = { column: PlaylistColumn; index: number; track: TrackItem };
-type Panel = "search" | "library" | "capacity" | "settings" | "import" | "youtube";
+type Panel = "search" | "settings";
 type Position = PlaylistOccurrence;
 type SearchFilter = "all" | "songs" | "videos" | "playlists";
 type MediaSwitch = { id: number; mode: MediaMode; target: Location };
-type VideoSession = { target: Location; resumeMs: number; pauseOnExit: boolean };
+type VideoSession = { target: Location; audioTarget: Location; resumeMs: number; pauseOnExit: boolean };
 type TerminalState = {
   inspected: Location | null;
   queue: Position | null;
@@ -61,10 +60,9 @@ function storePreference(key: string, value?: string): string | null {
 }
 
 class Terminal {
-  private readonly ipc: NastiIpcContract;
+  private readonly ipc: TerminalIpc;
   private readonly library: LibraryPanels;
-  private readonly youtube: YoutubePanel | null;
-  private readonly playlistEditor: PlaylistEditor;
+  private readonly youtube: YoutubePanel;
   private readonly outputs: OutputPicker;
   private readonly events = new AbortController();
   private readonly shell = element("terminal");
@@ -110,7 +108,6 @@ class Terminal {
   private advanceAfterEnd = storePreference("playback-end") !== "stop";
   private overviewId: string | null = null;
   private filter: SearchFilter = "all";
-  private searchSource: "local" | "archive" = "local";
   private power = storePreference("power") === "on";
   private panelTrigger: HTMLElement | null = null;
   private libraryReady = false;
@@ -130,9 +127,11 @@ class Terminal {
   private volumeRevision = 0;
   private lastVolume = 1;
   private lyricRequest = 0;
+  private catalogRevision = 0;
   private searchRequest = 0;
   private searchTimer = 0;
-  private feedbackTimer = 0;
+  private searchTracks = new Map<string, TrackItem>();
+  private readonly toastTimers = new Set<number>();
   private pollTimer = 0;
   private videoKey = "";
   private pendingVideoFrame = Promise.resolve();
@@ -144,6 +143,8 @@ class Terminal {
   private videoSession: VideoSession | null = null;
   private videoError = "";
   private returningAudio = false;
+  private startingVideo = false;
+  private videoIntent = 0;
   private transportActionKey = "";
 
   constructor(private readonly connection: TerminalConnection, restored?: TerminalState) {
@@ -160,26 +161,27 @@ class Terminal {
     this.ipc = connection.ipc;
     if (connection.updater) new SettingsUpdates(connection.updater, this.events.signal);
     this.outputs = new OutputPicker(this.ipc, this.events.signal);
-    this.youtube = connection.youtube ? new YoutubePanel(connection.youtube, this.events.signal, connection.onYoutubeDataCleared) : null;
+    this.youtube = new YoutubePanel(connection.youtube, async playlistId => {
+      if (playlistId) this.overviewId = playlistId;
+      await this.reloadCatalog();
+    }, (message, level, openLogin) => this.message(message, level, openLogin), this.events.signal);
     this.library = new LibraryPanels(this.ipc, () => this.reloadCatalog(),
-      track => this.playVaultTrack(track), value => this.message(value), this.events.signal,
-      this.youtube ? reference => this.showPanel("youtube", reference) : undefined);
-    this.playlistEditor = new PlaylistEditor(this.ipc, () => this.reloadCatalog(),
-      () => this.renderOverview(), value => this.message(value), this.events.signal);
+      track => this.playVaultTrack(track), (value, level) => this.message(value, level), this.events.signal);
     this.shell.dataset.native = String(!connection.inlineVideo);
-    element("search-sources").hidden = Boolean(connection.inlineVideo);
-    for (const control of this.shell.querySelectorAll<HTMLElement>("[data-youtube-entry]")) {
-      control.hidden = !this.youtube;
-    }
     if (connection.inlineVideo) {
       connection.inlineVideo.hidden = true;
       this.mvViewport.append(connection.inlineVideo);
     }
     this.connectEvents();
+    void connection.onYoutubeSnapshotsExpired?.(() => {
+      void this.reloadCatalog().catch(error => this.message(localizeError(error), "error"));
+    }).then(unlisten => {
+      if (this.events.signal.aborted) unlisten();
+      else this.events.signal.addEventListener("abort", unlisten, { once: true });
+    }).catch(() => {});
     this.frameResize.observe(this.mvViewport);
     this.frameResize.observe(element("transport-menu"));
     this.frameResize.observe(element("output-panel"));
-    this.frameResize.observe(element("add-menu"));
     this.frameResize.observe(element("volume-panel"));
     this.loadSettings();
     this.setTab(restored?.tab ?? "lyrics");
@@ -195,6 +197,7 @@ class Terminal {
         else window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
       });
     });
+    void this.youtube.start(bootComplete, !reopenSettings);
     // WebGL initialization can block the first paint, so start it after the opening cue.
     const sceneInit = bootComplete.then(() => {
       if (!this.closed) return this.scene.mount(element("scene"));
@@ -241,16 +244,20 @@ class Terminal {
     this.shell.addEventListener("click", event => {
       if (!(event.target instanceof Element)) return;
       const button = event.target.closest<HTMLButtonElement>("button[data-action]");
-      if (button && !button.disabled) void this.handleAction(button).catch(error => this.message(localizeError(error)));
+      if (button && !button.disabled) void this.handleAction(button).catch(error => this.message(localizeError(error), "error"));
     }, { signal });
     this.panel.addEventListener("close", () => {
       this.searchRequest++;
       if (!this.panel.open) this.updatePower();
     }, { signal });
     element("search-input").addEventListener("input", () => {
+      this.searchRequest++;
       clearTimeout(this.searchTimer);
-      if (this.searchSource === "local") {
-        this.searchTimer = window.setTimeout(() => void this.search(), 150);
+      const value = element<HTMLInputElement>("search-input").value.trim();
+      const reference = playlistReference(value);
+      element("search-results").replaceChildren();
+      if (reference || value.length >= 2) {
+        this.searchTimer = window.setTimeout(() => void this.search(), reference ? 180 : 700);
       }
     }, { signal });
     element("search-form").addEventListener("submit", event => {
@@ -337,9 +344,8 @@ class Terminal {
       event.preventDefault();
       if (!element("volume-panel").hidden) this.toggleVolume();
       else if (this.outputs.open) this.outputs.close(true);
-      else if (this.playlistEditor.dismiss()) return;
+      else if (this.youtube.dismiss()) return;
       else if (!element("transport-menu").hidden) this.closeTransportMenu(true);
-      else if (this.panel.open && this.panel.dataset.panel === "youtube" && this.youtube?.dismiss()) return;
       else if (this.panel.open) this.closePanel();
       else if (this.mode === "disassembly-360") this.leaveInspection();
       else if (this.mode === "detail-extracted") this.closeDetail();
@@ -360,7 +366,8 @@ class Terminal {
 
   private runShortcut(action: ShortcutAction): void {
     switch (action) {
-      case "search": case "settings": case "library": void this.showPanel(action); return;
+      case "search": case "settings": void this.showPanel(action); return;
+      case "library": void this.showVaultSettings(); return;
       case "radar": this.toggleRadar(); return;
       case "play-toggle": void this.togglePlaying(); return;
       case "previous": case "next": void this.changeTrack(action === "previous" ? -1 : 1, true); return;
@@ -385,14 +392,8 @@ class Terminal {
   private async handleAction(button: HTMLButtonElement): Promise<void> {
     switch (button.dataset.action) {
       case "search": return this.showPanel("search");
-      case "library": case "vault-drawer": return this.showPanel("library");
-      case "import-playlist": return this.showPanel("import");
-      case "youtube-playlists": if (this.youtube) return this.showPanel("youtube"); return;
-      case "vault-capacity": return this.showPanel("capacity");
-      case "retry-vault": return this.library.showVault(this.panel.dataset.panel === "capacity");
+      case "retry-vault": return this.library.showVault();
       case "play-vault": case "vault-menu": case "remove-vault-copy": return this.library.handleVault(button.dataset.action, button);
-      case "import-one": return this.library.import(Number(button.dataset.sourceIndex));
-      case "import-all": return this.library.import();
       case "settings": return this.showPanel("settings");
       case "settings-section": this.settings.jump(button.dataset.section, this.motionReduced); return;
       case "close-panel": this.closePanel(); return;
@@ -436,8 +437,6 @@ class Terminal {
       case "filter-songs": return this.changeFilter("songs");
       case "filter-videos": return this.changeFilter("videos");
       case "filter-playlists": return this.changeFilter("playlists");
-      case "search-local": return this.changeSearchSource("local");
-      case "search-archive": return this.changeSearchSource("archive");
       case "close-detail": this.closeDetail(); return;
       case "inspect-result": {
         const target = this.locateButton(button);
@@ -450,11 +449,11 @@ class Terminal {
         const target = this.locateButton(button);
         if (!target) return this.message(t("请先导入此曲所属的歌单", "Import the playlist that contains this track first."));
         const key = position(target);
-        if (this.playback.mode === "audio" && !["error", "idle"].includes(this.playback.status)
+        const video = button.closest<HTMLElement>("[data-mode]")?.dataset.mode === "video" && target.track.mvVideoId;
+        if (!video && this.playback.mode === "audio" && !["error", "idle"].includes(this.playback.status)
           && key.playlistId === this.queue?.playlistId && key.entryId === this.queue?.entryId) {
           return this.togglePlaying();
         }
-        const video = button.closest<HTMLElement>("[data-mode]")?.dataset.mode === "video" && target.track.mvVideoId;
         if (this.mode === "radar-grid" && !this.panel.open) return this.playTrack(target);
         this.closePanel();
         this.select(target, true);
@@ -463,36 +462,21 @@ class Terminal {
         return this.startVideo();
       }
       case "start-mv": return this.startVideo();
-      case "add-inspected": this.playlistEditor.togglePicker(this.columns, button); return;
-      case "choose-add": return this.playlistEditor.add(this.transportActionTrack(), this.columns.find(column => column.playlistId === button.dataset.playlistId));
-      case "manage-playlist": case "entry-menu": case "confirm-entry": case "cancel-remove-entry":
-      case "submit-remove-entry": case "submit-batch": case "undo-removal":
-        return this.playlistEditor.handle(button.dataset.action, button);
       case "toggle-vault": return this.toggleVault();
       case "seek-lyric": return this.seekLyric(Number(button.dataset.positionMs));
       case "view-playlist": {
-        const playlistId = button.closest<HTMLElement>("[data-playlist-id]")?.dataset.playlistId;
-        const first = this.locate(playlistId, 0);
+        this.overviewId = button.closest<HTMLElement>("[data-playlist-id]")?.dataset.playlistId ?? null;
         this.closePanel();
-        if (first) this.select(first, true);
-        else {
-          this.setMode("radar-grid");
-          this.message(t("该歌单暂无曲目", "This playlist is empty."));
-        }
+        this.setMode("radar-grid");
         return;
       }
       case "import-result": {
         const playlistId = button.closest<HTMLElement>("[data-playlist-id]")?.dataset.playlistId;
         if (playlistId) {
-          await this.showPanel("import");
-          await this.library.find(playlistId);
+          element<HTMLInputElement>("search-input").value = playlistId;
+          await this.search(playlistId);
         }
         return;
-      }
-      case "import-archive-result": {
-        if (!button.dataset.sourceUrl) return;
-        await this.showPanel("import");
-        return this.library.find(button.dataset.sourceUrl);
       }
       case "retry-lyrics": if (this.inspected) return this.loadLyrics(this.inspected.track.videoId); return;
       case "disassemble": {
@@ -618,7 +602,19 @@ class Terminal {
   private locateButton(button: HTMLButtonElement): Location | null {
     const row = button.closest<HTMLElement>("[data-video-id]");
     if (row?.dataset.playlistId && row.dataset.entryId) return this.locatePosition({ playlistId: row.dataset.playlistId, entryId: row.dataset.entryId });
+    const result = row?.closest("#search-results") && this.searchTracks.get(`${row.dataset.mode === "video" ? "video" : "audio"}:${row.dataset.videoId ?? ""}`);
+    if (result) {
+      const present = this.findByVideoId(result.videoId);
+      return present ? { ...present, track: { ...present.track, mvVideoId: result.mvVideoId ?? present.track.mvVideoId } }
+        : this.detachedLocation(result);
+    }
     return this.locate(row?.dataset.playlistId, Number(row?.dataset.trackIndex)) ?? this.findByVideoId(row?.dataset.videoId);
+  }
+
+  private detachedLocation(track: TrackItem): Location {
+    return { index: 0, track, column: {
+      playlistId: "", columnIndex: -1, title: track.title, codeName: "", isEditable: false, tracks: [track],
+    } };
   }
 
   private locatePosition(key: Position | null): Location | null {
@@ -629,13 +625,14 @@ class Terminal {
   }
 
   private async reloadCatalog(): Promise<void> {
+    const request = ++this.catalogRevision;
     const columns = (await this.ipc.catalog_fetch_columns()).map(localizePlaylist).sort((a, b) => a.columnIndex - b.columnIndex);
-    if (this.closed) return;
+    if (this.closed || request !== this.catalogRevision) return;
     const old = this.inspected;
     this.columns = columns;
     this.libraryReady = true;
     const oldList = this.columns.find(column => column.playlistId === old?.column.playlistId);
-    const next = this.locatePosition(old && position(old))
+    const next = (old?.column.columnIndex === -1 ? old : null) ?? this.locatePosition(old && position(old))
       ?? this.locate(oldList?.playlistId, Math.min(old?.index ?? 0, (oldList?.tracks.length ?? 0) - 1))
       ?? this.findByVideoId(old?.track.videoId)
       ?? this.locate(this.columns.find(column => column.tracks.length > 0)?.playlistId, 0);
@@ -711,7 +708,6 @@ class Terminal {
     element("detail").hidden = detailHidden;
     element("detail-tabs").hidden = detailHidden;
     this.buttons("close-detail")[0].hidden = detailHidden;
-    this.shell.querySelector<HTMLElement>(".terminal-capsule")!.hidden = next === "detail-extracted";
     element("inspection-tools").hidden = next !== "disassembly-360";
     if (changed && next === "detail-extracted" && this.inspected && this.lyricTrack !== this.inspected.track.videoId && this.tab === "lyrics") {
       void this.loadLyrics(this.inspected.track.videoId);
@@ -720,7 +716,7 @@ class Terminal {
     radar?.setAttribute("aria-pressed", String(next === "radar-grid"));
     this.disable("radar", next === "radar-grid" && this.sceneFailed);
     if (changed && next === "radar-grid") {
-      this.overviewId = this.inspected?.column.playlistId ?? this.overviewId;
+      this.overviewId ??= this.inspected?.column.playlistId ?? null;
       this.renderOverview();
     }
     if (updateScene && this.sceneReady) {
@@ -828,14 +824,14 @@ class Terminal {
 
   private renderOverview(keepFocus = false): void {
     const column = this.columns.find(item => item.playlistId === this.overviewId)
-      ?? this.inspected?.column ?? this.columns[0];
+      ?? this.columns.find(item => item.playlistId === this.inspected?.column.playlistId) ?? this.columns[0];
     this.overviewId = column?.playlistId ?? null;
     const sidebar = element("radar-columns");
     sidebar.replaceChildren(...this.columns.map(item => makeOverviewPlaylist(item, item === column)));
     if (keepFocus) sidebar.querySelector<HTMLButtonElement>('[aria-current="true"]')?.focus();
     setText(element("radar-title"), column?.title ?? t("曲库总览", "Library overview"));
     const rows = column?.tracks.map((track, index) => makeTrackRow(track, column, index, true)) ?? [];
-    this.playlistEditor.decorate(column, rows);
+    this.youtube.decorate(column ?? null, rows);
     element("overview-tracks").replaceChildren(...(rows.length ? rows : [empty(column ? t("该歌单暂无曲目", "This playlist is empty.") : t("曲库暂无歌单", "No playlists in the library."))]));
     this.markTrackRows();
   }
@@ -900,49 +896,37 @@ class Terminal {
     this.updateVideoFrame();
   }
 
-  private async showPanel(panel: Panel, reference?: string): Promise<void> {
-    if (panel !== "youtube") this.youtube?.cancelConnection();
+  private async showPanel(panel: Panel): Promise<void> {
     if (!this.panel.open) this.panelTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    if (panel === "search" && this.mode === "radar-grid" && !this.sceneFailed) this.setMode("archive-array");
     this.closeTransportMenu();
     this.closeVolumePanel(false);
     this.outputs.close();
     this.leaveVideo();
-    const sectionName = panel === "capacity" ? "library" : panel;
-    for (const section of ["search", "library", "settings", "import", "youtube"]) element(section + "-panel").hidden = section !== sectionName;
+    for (const section of ["search", "settings"]) element(section + "-panel").hidden = section !== panel;
     this.panel.dataset.panel = panel;
     this.shell.dataset.panel = panel;
-    const titles = { search: t("检索曲库", "Search library"), library: t("离线储藏库", "Vault"), capacity: t("Vault 容量", "Vault storage"), import: t("导入歌单", "Import playlist"), settings: t("终端设置", "Settings"), youtube: "YouTube Music" };
-    setText(element("panel-title"), titles[panel]);
+    setText(element("panel-title"), panel === "search" ? t("搜索与导入", "Search and import") : t("终端设置", "Settings"));
     if (!this.panel.open) this.panel.show();
     this.updatePower();
-    if (panel === "search") {
-      element("search-input").focus();
-      await this.search();
-    } else if (panel === "library" || panel === "capacity") {
-      await this.library.showVault(panel === "capacity");
-      element("library-panel").querySelector<HTMLButtonElement>("button:not([hidden])")?.focus({ preventScroll: true });
-    } else if (panel === "import") element("import-input").focus();
-    else if (panel === "youtube") await this.youtube?.show(reference);
+    if (panel === "search") element("search-input").focus();
     else {
       this.settings.measure();
       element("settings-panel").querySelector<HTMLElement>('[aria-current="true"]')?.focus({ preventScroll: true });
-      try {
-        const stats = await this.ipc.vault_get_storage_stats();
-        const used = (stats.usedBytes / 1048576).toLocaleString(dateLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-        const limit = (stats.limitBytes / 1048576).toLocaleString(dateLocale(), { maximumFractionDigits: 0 });
-        setText(element("settings-storage"), `${used} / ${limit} MiB`);
-      } catch {
-        setText(element("settings-storage"), t("容量暂时无法读取", "Storage information is unavailable."));
-      }
+      await this.library.showVault();
     }
+  }
+
+  private async showVaultSettings(): Promise<void> {
+    const opening = this.showPanel("settings");
+    this.settings.jump("library", true);
+    await opening;
   }
 
   private closePanel(): void {
     if (!this.panel.open) return;
     this.searchRequest++;
+    clearTimeout(this.searchTimer);
     this.panel.close();
-    this.youtube?.cancelConnection();
     delete this.shell.dataset.panel;
     this.panelTrigger?.focus({ preventScroll: true });
     this.panelTrigger = null;
@@ -955,70 +939,42 @@ class Terminal {
     return this.search();
   }
 
-  private changeSearchSource(source: "local" | "archive"): Promise<void> {
-    this.setSearchSource(source);
-    element("search-input").focus();
-    return this.search();
-  }
-
-  private setSearchSource(source: "local" | "archive"): void {
-    const online = source === "archive";
-    clearTimeout(this.searchTimer);
-    this.searchSource = source;
-    this.pressed("search-local", !online);
-    this.pressed("search-archive", online);
-    element("search-filters").hidden = online;
-    element("search-submit").hidden = !online;
-    setText(element("search-source-label"), online ? "Internet Archive · unfoundsound" : t("本地曲库", "Local library"));
-    const input = element<HTMLInputElement>("search-input");
-    input.placeholder = online ? t("搜索专辑、曲名、艺人或编号", "Search albums, tracks, artists, or release IDs") : t("搜索歌名、艺人或歌单", "Search tracks, artists, or playlists");
-  }
-
-  private async search(): Promise<void> {
+  private async search(knownPlaylist?: string): Promise<void> {
     const request = ++this.searchRequest;
     const query = element<HTMLInputElement>("search-input").value.trim();
     const area = element("search-results");
+    const current = () => request === this.searchRequest && this.panel.open
+      && this.panel.dataset.panel === "search" && !this.closed;
+    this.searchTracks.clear();
+    area.replaceChildren();
+    if (!query) return;
     try {
-      if (this.searchSource === "archive") {
-        if (!query) {
-          area.replaceChildren(empty(t("输入专辑、曲名、艺人或编号，查找可导入的授权发行。", "Search for a licensed release by album, track, artist, or release ID.")));
-          return;
-        }
-        area.replaceChildren(empty(t("正在读取授权目录", "Reading licensed catalog…")));
-        const result = await this.ipc.catalog_search_archive({ query });
-        if (request !== this.searchRequest || !this.panel.open) return;
-        area.replaceChildren(...result.map(makeArchiveResult));
-        if (!result.length) area.append(empty(t("未找到匹配的授权专辑或曲目", "No matching licensed albums or tracks.")));
+      const playlist = knownPlaylist ?? playlistReference(query);
+      if (playlist) {
+        await this.youtube.preview(playlist, area, current);
         return;
       }
-      const filter = this.filter;
-      const aliases = matchesLocalizedCatalog(query);
-      const result = await this.ipc.catalog_search({ query: aliases ? "" : query, filter });
-      if (request !== this.searchRequest || !this.panel.open || this.closed) return;
-      const needle = query.toLowerCase();
-      const matches = (values: (string | null | undefined)[]) => !aliases
-        || values.some(value => value?.toLowerCase().includes(needle));
-      const tracks = (filter === "videos" ? result.videos : result.songs).flatMap(track => {
-        const localized = localizeTrack(track);
-        return matches([track.title, track.album?.name, localized.title, localized.album?.name,
-          ...track.artists.map(artist => artist.name), ...localized.artists.map(artist => artist.name)]) ? [localized] : [];
-      });
-      const playlists = result.playlists.flatMap(playlist => {
-        const localized = localizePlaylist(playlist);
-        return matches([playlist.playlistId, playlist.title, playlist.subtitle,
-          localized.title, localized.subtitle]) ? [localized] : [];
-      });
-      const rows = tracks.map((track, index) => makeTrackRow(track, null, index));
-      if (filter === "videos") rows.forEach(row => { row.dataset.mode = "video"; });
-      area.replaceChildren(...rows, ...playlists.map(playlist => makePlaylistRow(playlist, !playlist.isEditable)));
-      if (!rows.length && !playlists.length) area.append(empty(t("未找到匹配的曲目或歌单", "No matching tracks or playlists.")));
+      area.replaceChildren(empty(t("正在搜索 YouTube Music", "Searching YouTube Music…")));
+      const result = await this.ipc.catalog_search({ query, filter: this.filter });
+      if (!current()) return;
+      const rows = [
+        ...result.songs.map((track, index) => this.searchRow(track, index, false)),
+        ...result.videos.map((track, index) => this.searchRow(track, index, true)),
+        ...result.playlists.map(playlist => makePlaylistRow(playlist, !this.columns.some(column => column.playlistId === playlist.playlistId))),
+      ];
+      area.replaceChildren(...(rows.length ? rows : [empty(t("未找到匹配的曲目或歌单", "No matching tracks or playlists."))]));
     } catch (error) {
-      if (request === this.searchRequest && this.panel.open) {
-        if (this.searchSource === "archive") {
-          area.replaceChildren(empty(localizeError(error, "无法读取授权目录。", "Could not read the licensed catalog.")));
-        } else area.replaceChildren(empty(t("检索失败，请重试", "Search failed. Try again.")));
-      }
+      if (!current()) return;
+      area.replaceChildren();
+      this.message(localizeError(error), "error");
     }
+  }
+
+  private searchRow(track: TrackItem, index: number, video: boolean): HTMLElement {
+    this.searchTracks.set(`${video ? "video" : "audio"}:${track.videoId}`, track);
+    const row = makeTrackRow(track, null, index);
+    if (video) row.dataset.mode = "video";
+    return row;
   }
 
   private async toggleVault(): Promise<void> {
@@ -1028,11 +984,13 @@ class Terminal {
     try {
       if (track.isVaultDownloaded) {
         await this.ipc.vault_remove_track({ videoId: track.videoId });
-        this.message(t("已从储藏库移除 ", "Removed from Vault: ") + track.title);
+        if (this.detachedTrack?.videoId === track.videoId) this.detachedTrack = { ...track, isVaultDownloaded: false, isVaultVideoDownloaded: false };
+        this.message(t("已从储藏库移除 ", "Removed from Vault: ") + track.title, "success");
       } else {
         this.message(t("正在存入储藏库 ", "Saving to Vault: ") + track.title);
-        await this.ipc.vault_download_track({ videoId: track.videoId, downloadMv: Boolean(track.mvVideoId) });
-        this.message(t("已存入储藏库 ", "Saved to Vault: ") + track.title);
+        const saved = await this.ipc.vault_download_track({ videoId: track.videoId, downloadMv: Boolean(track.mvVideoId) });
+        if (this.detachedTrack?.videoId === track.videoId) this.detachedTrack = saved;
+        this.message(t("已存入储藏库 ", "Saved to Vault: ") + track.title, "success");
       }
       await this.reloadCatalog();
     } finally {
@@ -1051,7 +1009,7 @@ class Terminal {
   }
 
   private playbackAction(action: () => Promise<PlaybackSnapshot>): Promise<void> {
-    return this.enqueuePlayback(async () => this.acceptPlayback(await action())).catch(error => this.message(localizeError(error)));
+    return this.enqueuePlayback(async () => this.acceptPlayback(await action())).catch(error => this.message(localizeError(error), "error"));
   }
 
   private playTrack(target: Location, positionMs = 0): Promise<void> {
@@ -1064,6 +1022,7 @@ class Terminal {
   }
 
   private playAudio(track: TrackItem, location: Position | null, positionMs: number): Promise<void> {
+    this.videoIntent++;
     this.cancelMediaSwitch();
     this.videoSession = null;
     this.videoError = "";
@@ -1072,7 +1031,7 @@ class Terminal {
         this.acceptPlayback(await this.ipc.playback_set_playing({ playing: false }));
       }
       if (this.closed) return this.playback;
-      const next = await this.ipc.playback_load({ videoId: track.videoId, mode: "audio", positionMs, autoplay: true });
+      const next = await this.ipc.playback_load({ videoId: track.videoId, mode: "audio", positionMs, autoplay: true, title: track.title, artist: trackArtists(track) });
       this.videoSession = null;
       this.queue = location;
       this.detachedTrack = localizeTrack(track);
@@ -1097,11 +1056,11 @@ class Terminal {
     this.updateVideoFrame();
     const switchId = request.id;
     try {
-      await this.ipc.playback_prepare({ switchId, videoId: target.track.videoId, mode });
+      await this.ipc.playback_prepare({ switchId, videoId: target.track.videoId, mode, title: target.track.title, artist: trackArtists(target.track) });
       await this.enqueuePlayback(async () => {
         if (this.mediaSwitch !== request || this.closed) return;
         // Navigation can change while the native commit is seeking. Recheck before starting playback.
-        const result = await this.ipc.playback_commit({ switchId, alignTime: Boolean(target.track.mvTimelineAligned), positionMs, autoplay: false });
+        const result = await this.ipc.playback_commit({ switchId, alignTime: false, positionMs, autoplay: false });
         if (this.closed) return;
         this.queue = position(target);
         onCommit?.(result, this.mediaSwitch !== request);
@@ -1126,28 +1085,40 @@ class Terminal {
 
   private async startVideo(): Promise<void> {
     const target = this.inspected;
-    if (!target?.track.mvVideoId || !this.showsVideo(target) || this.videoUnavailable() || this.mediaSwitch || this.returningAudio) return;
+    if (!target?.track.mvVideoId || !this.showsVideo(target) || this.videoUnavailable()
+      || this.mediaSwitch || this.returningAudio || this.startingVideo) return;
+    this.startingVideo = true;
+    const intent = ++this.videoIntent;
     this.videoError = "";
-    let resumePlaying = false;
+    let audioTarget = target;
+    let resumeMs = 0;
     try {
-      await this.switchMedia(target, "video", 0, () => this.showsVideo(target) && !this.videoSession?.pauseOnExit,
-        ({ previous }, superseded) => {
-          resumePlaying = previous.status === "playing" || previous.status === "loading";
-          this.videoSession = {
-            target,
-            resumeMs: previous.mode === "audio" && previous.videoId === target.track.videoId ? previous.positionMs : 0,
-            pauseOnExit: superseded || !this.showsVideo(target),
-          };
+      await this.enqueuePlayback(async () => {
+        if (intent !== this.videoIntent || !this.showsVideo(target)) return;
+        const previous = await this.ipc.playback_get_state();
+        if (previous.mode !== "audio" || !previous.videoId) return;
+        const location = this.transportLocation();
+        const track = this.transportTrack(location);
+        const paused = await this.ipc.playback_set_playing({ playing: false });
+        if (paused.mode === "audio" && paused.videoId === previous.videoId) {
+          this.acceptPlayback(paused);
+          if (track?.videoId === paused.videoId) audioTarget = location ?? this.detachedLocation(track);
+          if (audioTarget.track.videoId === paused.videoId) resumeMs = paused.positionMs;
+        }
+      });
+      if (this.closed || intent !== this.videoIntent || !this.showsVideo(target)) return;
+      await this.switchMedia(target, "video", 0, () => intent === this.videoIntent && this.showsVideo(target),
+        (_result, superseded) => {
+          this.videoSession = { target, audioTarget, resumeMs, pauseOnExit: superseded || !this.showsVideo(target) };
         });
-      if (this.videoSession?.target === target && !this.mediaSwitch && (this.videoSession.pauseOnExit || !this.showsVideo(target))) this.leaveVideo();
-    } catch {
+      if (this.videoSession?.target === target && (this.videoSession.pauseOnExit || !this.showsVideo(target))) this.leaveVideo();
+    } catch (error) {
       if (this.closed) return;
-      if (this.videoSession?.target === target) {
-        if (this.videoSession.pauseOnExit || !this.showsVideo(target)) this.leaveVideo();
-        else void this.returnToAudio(resumePlaying);
-      }
-      this.videoError = this.playback.mode === "audio" && this.playback.status === "playing"
-        ? t("MV 播放失败，音频继续播放", "Music video failed to play. Audio is still playing.") : t("MV 播放失败", "Could not play the music video.");
+      if (this.videoSession?.target === target) this.leaveVideo();
+      this.videoError = t("MV 播放失败", "Could not play the music video.");
+      this.message(localizeError(error), "error");
+    } finally {
+      this.startingVideo = false;
       this.updateVideoFrame();
     }
   }
@@ -1160,13 +1131,14 @@ class Terminal {
   }
 
   private leaveVideo(): void {
+    this.videoIntent++;
     if (this.mediaSwitch?.mode === "video") this.cancelMediaSwitch();
     if (!this.videoSession) return;
     this.videoSession.pauseOnExit = true;
     void this.returnToAudio();
   }
 
-  private async returnToAudio(restorePlaying?: boolean): Promise<void> {
+  private async returnToAudio(): Promise<void> {
     const session = this.videoSession;
     if (!session || this.returningAudio) return;
     this.returningAudio = true;
@@ -1180,13 +1152,11 @@ class Terminal {
         });
       }
       if (this.closed || this.videoSession !== session) return;
-      await this.switchMedia(session.target, "audio", session.resumeMs,
-        () => Boolean(restorePlaying) && !session.pauseOnExit);
+      await this.switchMedia(session.audioTarget, "audio", session.resumeMs, () => false);
       if (this.videoSession !== session || this.playback.mode !== "audio") return;
+      this.detachedTrack = session.audioTarget.track;
       this.videoSession = null;
-      if (restorePlaying !== undefined && !session.pauseOnExit) {
-        this.videoError = restorePlaying ? t("MV 播放失败，已接回音频", "Music video failed to play. Audio resumed.") : t("MV 播放失败，已返回纯音频", "Music video failed to play. Returned to audio.");
-      }
+      this.renderPlayback();
     } catch {
       this.videoError = t("MV 切换失败，纯音频暂时无法恢复", "Could not switch back to audio.");
       if (this.tab !== "mv-stage") this.message(this.videoError);
@@ -1197,7 +1167,7 @@ class Terminal {
   }
 
   private togglePlaying(): Promise<void> {
-    if (this.playback.mode === "video" && this.videoSession && (this.returningAudio || !this.showsVideo(this.videoSession.target))) {
+    if (this.playback.mode === "video" && this.videoSession) {
       this.leaveVideo();
       return Promise.resolve();
     }
@@ -1213,7 +1183,7 @@ class Terminal {
     return this.enqueuePlayback(async () => {
       if (this.playback.mode === "video" && this.videoSession && (this.returningAudio || !this.showsVideo(this.videoSession.target))) return;
       this.acceptPlayback(await this.ipc.playback_set_playing({ playing: this.playback.status !== "playing" }));
-    }).catch(error => this.message(localizeError(error)));
+    }).catch(error => this.message(localizeError(error), "error"));
   }
 
   private async changeTrack(direction: 1 | -1, wrap: boolean): Promise<void> {
@@ -1255,7 +1225,6 @@ class Terminal {
   private closeTransportMenu(focus = false): void {
     const menu = element("transport-menu");
     if (menu.hidden) return;
-    this.playlistEditor.closePicker(false);
     menu.hidden = true;
     const trigger = this.buttons("transport-more")[0];
     trigger.setAttribute("aria-expanded", "false");
@@ -1311,7 +1280,7 @@ class Terminal {
           this.volumeRevision++;
           this.playback = { ...this.playback, volume: next.volume };
         } catch (error) {
-          if (this.queuedVolume === null) this.message(localizeError(error));
+          if (this.queuedVolume === null) this.message(localizeError(error), "error");
         }
       }
     } finally {
@@ -1361,7 +1330,7 @@ class Terminal {
     } catch (error) {
       if (version === this.playbackVersion && !this.closed && this.playback.status !== "error") {
         this.playback = { ...this.playback, status: "error" };
-        this.message(localizeError(error));
+        this.message(localizeError(error), "error");
         this.renderPlayback();
       }
     } finally {
@@ -1377,13 +1346,14 @@ class Terminal {
     if (next.error && next.error !== old.error) {
       if (next.mode === "video" && this.videoSession) {
         this.videoError = t("MV 播放失败，正在恢复音频", "Music video failed to play. Restoring audio…");
-        void this.returnToAudio(old.status === "playing" || old.status === "loading");
+        this.leaveVideo();
       } else this.message(localizeError(next.error));
     }
     this.renderPlayback();
-    const visibleVideo = this.videoSession && !this.videoSession.pauseOnExit && this.showsVideo(this.videoSession.target);
+    if (next.mode === "video" && this.videoSession && !this.returningAudio && !this.mediaSwitch
+      && (next.status === "paused" || next.status === "ended")) this.leaveVideo();
     if (next.status === "ended" && old.status !== "ended" && this.pendingPlaybackCount === 0
-      && !this.mediaSwitch && (next.mode === "audio" || visibleVideo)) {
+      && !this.mediaSwitch && next.mode === "audio") {
       if (this.repeat === "one") void this.togglePlaying();
       else if (this.repeat === "all" || this.advanceAfterEnd) {
         if (this.repeat === "all" && !this.transportLocation()) void this.togglePlaying();
@@ -1417,7 +1387,6 @@ class Terminal {
       this.transportActionKey = key;
     }
     element("transport-more").hidden = !track;
-    this.disable("add-inspected", !this.columns.some(column => column.isEditable));
     this.disable("disassemble", !this.sceneReady || !source || source.track.videoId !== track?.videoId);
     setText(element("transport-vault"), track?.isVaultDownloaded ? t("从 Vault 移除", "Remove from Vault") : t("存入 Vault", "Save to Vault"));
   }
@@ -1487,7 +1456,7 @@ class Terminal {
     this.mvPoster.hidden = ready;
     const track = this.inspected?.track;
     const unavailable = !track?.mvVideoId || this.videoUnavailable();
-    const preparing = this.mediaSwitch?.mode === "video" || (matched && this.playback.status === "loading");
+    const preparing = this.startingVideo || this.mediaSwitch?.mode === "video" || (matched && this.playback.status === "loading");
     const hint = !track?.mvVideoId ? t("此曲暂无 MV", "This track has no music video.") : this.videoUnavailable() ? t("离线，MV 未下载", "Offline. Music video is unavailable.")
       : preparing ? t("正在准备 MV", "Preparing music video…") : this.returningAudio ? t("正在恢复音频", "Restoring audio…")
       : this.videoError || (track.mvTimelineAligned ? "" : t("MV 将从头播放", "The music video will start from the beginning."));
@@ -1505,9 +1474,9 @@ class Terminal {
     }
     const rect = ready ? this.mvViewport.getBoundingClientRect() : null;
     // The native video surface is above the web view. Keep player popovers readable where they overlap it.
-    const obscured = rect && ["transport-menu", "add-menu", "output-panel"].some(id => {
+    const obscured = rect && ["transport-menu", "output-panel", "login-card", "account-popover", "toast-stack"].some(id => {
       const popup = element(id);
-      if (popup.hidden) return false;
+      if (popup.hidden || (popup instanceof HTMLDialogElement && !popup.open) || (id === "toast-stack" && !popup.childElementCount)) return false;
       const bounds = popup.getBoundingClientRect();
       return bounds.left < rect.right && bounds.right > rect.left && bounds.top < rect.bottom && bounds.bottom > rect.top;
     });
@@ -1523,18 +1492,49 @@ class Terminal {
       try {
         await this.ipc.playback_set_video_frame({ frame });
       } catch (error) {
-        this.message(localizeError(error));
+        this.message(localizeError(error), "error");
       }
     });
   }
 
-  private message(text: string): void {
+  private message(text: string, level: ToastLevel = "info", openLogin = false): void {
     if (this.closed) return;
-    const status = element("feedback");
-    setText(status, text);
-    status.hidden = false;
-    clearTimeout(this.feedbackTimer);
-    this.feedbackTimer = window.setTimeout(() => { status.hidden = true; }, 3800);
+    const stack = element("toast-stack");
+    const duplicate = [...stack.children].find(node => node.textContent === text && !(node as HTMLElement).dataset.closing);
+    if (duplicate) return;
+    const toast = document.createElement("div");
+    toast.className = "glass toast";
+    toast.dataset.level = level;
+    toast.setAttribute("role", level === "error" || level === "warning" ? "alert" : "status");
+    const glyph: Record<ToastLevel, IconName> = { info: "info", success: "check", warning: "warning", error: "error" };
+    const mark = document.createElement("span");
+    mark.innerHTML = icon(glyph[level]);
+    const copy = openLogin ? document.createElement("button") : document.createElement("span");
+    copy.textContent = text;
+    if (copy instanceof HTMLButtonElement) {
+      copy.type = "button";
+      copy.onclick = () => { this.youtube.openLogin(); dismiss(); };
+    }
+    const close = actionButton("close", "dismiss-toast", t("关闭通知", "Dismiss notification"));
+    delete close.dataset.action;
+    const schedule = (callback: () => void, delay: number) => {
+      const timer = window.setTimeout(() => { this.toastTimers.delete(timer); callback(); }, delay);
+      this.toastTimers.add(timer);
+      return timer;
+    };
+    const dismiss = () => {
+      if (toast.dataset.closing) return;
+      clearTimeout(timer);
+      this.toastTimers.delete(timer);
+      toast.dataset.closing = "true";
+      schedule(() => { toast.remove(); this.updateVideoFrame(); }, this.motionReduced ? 0 : 180);
+    };
+    const timer = schedule(dismiss, level === "warning" || level === "error" ? 8500 : 4500);
+    close.onclick = dismiss;
+    toast.append(mark, copy, close);
+    while (stack.childElementCount >= 4) stack.firstElementChild?.remove();
+    stack.append(toast);
+    this.updateVideoFrame();
   }
 
   private dispose(closeConnection = true): void {
@@ -1547,7 +1547,7 @@ class Terminal {
     if (closeConnection) this.connection.dispose();
     clearTimeout(this.pollTimer);
     clearTimeout(this.searchTimer);
-    clearTimeout(this.feedbackTimer);
+    for (const timer of this.toastTimers) clearTimeout(timer);
   }
 }
 

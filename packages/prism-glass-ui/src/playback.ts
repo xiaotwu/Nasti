@@ -1,5 +1,5 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { language, t } from "./i18n";
 import { createMockIpc } from "../../../contracts/mock-ipc";
 import type {
@@ -15,17 +15,14 @@ export async function setDesktopLanguage(): Promise<void> {
   if (isTauri()) await invoke("ui_set_language", { language: language() });
 }
 
-const host: NastiIpcContract = {
+export type TerminalIpc = Pick<NastiIpcContract,
+  "catalog_fetch_columns" | "catalog_search" | "lyrics_get_synced" | "playback_list_outputs" | "playback_set_output"
+  | "vault_download_track" | "vault_remove_track" | "vault_get_storage_stats" | "vault_list_tracks" | "vault_set_storage_limit"
+> & PlaybackController;
+
+const host: TerminalIpc = {
   catalog_fetch_columns: () => command("catalog_fetch_columns"),
-  catalog_import_playlist_url: args => command("catalog_import_playlist_url", args),
-  catalog_preview_playlist: args => command("catalog_preview_playlist", args),
-  catalog_apply_playlist_import: args => command("catalog_apply_playlist_import", args),
   catalog_search: args => command("catalog_search", args),
-  catalog_search_archive: args => command("catalog_search_archive", args),
-  playlist_add_track: args => command("playlist_add_track", args),
-  playlist_remove_track: args => command("playlist_remove_track", args),
-  playlist_remove_entries: args => command("playlist_remove_entries", args),
-  playlist_restore_entries: args => command("playlist_restore_entries", args),
   vault_download_track: args => command("vault_download_track", args),
   vault_remove_track: args => command("vault_remove_track", args),
   vault_get_storage_stats: () => command("vault_get_storage_stats"),
@@ -51,11 +48,11 @@ export interface AppUpdater {
 }
 
 export interface TerminalConnection {
-  ipc: NastiIpcContract;
+  ipc: TerminalIpc;
   inlineVideo: HTMLVideoElement | null;
   youtube?: (request: YoutubeRequest) => Promise<YoutubeReply>;
-  onYoutubeDataCleared?: (clear: () => void) => Promise<() => void>;
   updater?: AppUpdater;
+  onYoutubeSnapshotsExpired?: (refresh: () => void) => Promise<() => void>;
   dispose: () => void;
 }
 
@@ -64,7 +61,7 @@ export async function openTerminal(): Promise<TerminalConnection> {
     ipc: host,
     inlineVideo: null,
     youtube: request => command("youtube_playlist_action", request),
-    onYoutubeDataCleared: clear => listen("youtube-session-cleared", clear),
+    onYoutubeSnapshotsExpired: refresh => listen("youtube-snapshots-expired", refresh),
     updater: {
       check: () => command("app_update_check"),
       install: args => command("app_update_install", args),
@@ -75,7 +72,9 @@ export async function openTerminal(): Promise<TerminalConnection> {
   if (!response.ok) throw new Error(t("授权曲库暂时无法打开", "The authorized library could not be opened."));
   const catalog: AuthorizedCatalog = await response.json();
   const browser = new BrowserPlayback(catalog);
-  return { ipc: createMockIpc(catalog, browser), get inlineVideo() { return browser.media; }, dispose: () => browser.dispose() };
+  const local = createMockIpc(catalog, browser);
+  const ipc: TerminalIpc = { ...local, catalog_fetch_columns: async () => [] };
+  return { ipc, get inlineVideo() { return browser.media; }, dispose: () => browser.dispose() };
 }
 
 export const initialPlayback: PlaybackSnapshot = {

@@ -10,9 +10,10 @@ typedef struct {
     void (*release)(void *context);
 } NastiPlaybackSource;
 
-void nasti_native_load(const char *url, const char *video_id, bool is_video,
+void nasti_native_load(const char *url, const char *audio_url, const char *video_id, const char *title, const char *artist, bool is_video,
                        uint64_t position_ms, bool autoplay, NastiPlaybackSource source);
-void nasti_native_prepare(const char *url, const char *video_id, bool is_video, NastiPlaybackSource source);
+void nasti_native_prepare(const char *url, const char *audio_url, const char *video_id, const char *title, const char *artist, bool is_video, NastiPlaybackSource source);
+bool nasti_native_prepare_parked_audio(const char *video_id);
 char *nasti_native_copy_preparation(void);
 void nasti_native_seek_preparation(uint64_t position_ms);
 bool nasti_native_commit_preparation(bool autoplay, bool align_time, uint64_t position_ms);

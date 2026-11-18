@@ -1,4 +1,5 @@
 use crate::archive_media::{ArchiveHttp, ArchiveMedia, ArchiveMediaError};
+use crate::youtube_media::{YoutubeHttp, YoutubeStream};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -15,6 +16,7 @@ const MAX_LIMIT: u64 = 2048 * MIB;
 const AUDIO: &str = "audio.m4a";
 const MP3: &str = "audio.mp3";
 const VIDEO: &str = "video.mp4";
+pub(crate) const VIDEO_ONLY: &str = "video-only.mp4";
 const LIMIT: &str = "limit-bytes";
 const LIMIT_PENDING: &str = ".limit-pending";
 
@@ -312,6 +314,78 @@ impl Vault {
         Ok(())
     }
 
+    pub(crate) async fn download_youtube(
+        &self,
+        key: &str,
+        id: &str,
+        include_video: bool,
+        http: &YoutubeHttp,
+    ) -> Result<(), VaultError> {
+        let dir = self.track_dir(key)?;
+        let _guard = self.write_lock.lock().await;
+        let mut video = None;
+        let mut paired_audio = None;
+        let mut video_name = VIDEO;
+        if include_video && self.path(key, "video").is_none() {
+            #[cfg(target_os = "macos")]
+            if let Ok((image, sound)) = http.resolve_video(id).await {
+                video = Some(image);
+                paired_audio = sound;
+                if paired_audio.is_some() {
+                    video_name = VIDEO_ONLY;
+                }
+            }
+            if video.is_none() {
+                video = Some(http.resolve(id, "video").await?);
+            }
+        }
+        let audio = if self.path(key, "audio").is_none() {
+            Some(match paired_audio {
+                Some(source) => source,
+                None => http.resolve(id, "audio").await?,
+            })
+        } else {
+            None
+        };
+        if audio.is_none() && video.is_none() {
+            return Ok(());
+        }
+        let new_bytes = audio
+            .iter()
+            .chain(video.iter())
+            .fold(0_u64, |sum, media| sum.saturating_add(media.size));
+        let (used, limit, _) = self.read_stats()?;
+        if used.saturating_add(new_bytes) > limit {
+            return Err(VaultError::Full);
+        }
+
+        self.require_atomic_staging()?;
+        let stage = self.staging.join(format!(".pending-{key}"));
+        tokio::fs::create_dir(&stage).await?;
+        let result = async {
+            if let Some(audio) = &audio {
+                copy_youtube(http, audio, &stage.join(AUDIO)).await?;
+            }
+            if let Some(video) = &video {
+                copy_youtube(http, video, &stage.join(video_name)).await?;
+            }
+            sync_directory(&stage)?;
+            if audio.is_some() {
+                tokio::fs::rename(&stage, &dir).await?;
+            } else {
+                tokio::fs::rename(stage.join(video_name), dir.join(video_name)).await?;
+                sync_directory(&dir)?;
+            }
+            self.sync_commit()?;
+            Ok(())
+        }
+        .await;
+        if stage.exists() {
+            tokio::fs::remove_dir_all(&stage).await?;
+        }
+        result
+    }
+
     pub fn remove(&self, id: &str) -> Result<bool, VaultError> {
         self.remove_with(id, || Ok(()))
     }
@@ -395,6 +469,39 @@ impl Vault {
     }
 }
 
+async fn copy_youtube(
+    http: &YoutubeHttp,
+    media: &YoutubeStream,
+    path: &Path,
+) -> Result<(), VaultError> {
+    let mut output = tokio::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .await?;
+    let mut offset = 0;
+    while offset < media.size {
+        let end = (offset + 4 * MIB).min(media.size) - 1;
+        let mut response = http.get(media, offset, end).await?;
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| io::Error::other(error.without_url()))?
+        {
+            offset += chunk.len() as u64;
+            if offset > end + 1 {
+                return Err(VaultError::Verification);
+            }
+            output.write_all(&chunk).await?;
+        }
+        if offset != end + 1 {
+            return Err(VaultError::Verification);
+        }
+    }
+    output.sync_all().await?;
+    Ok(())
+}
+
 #[cfg(unix)]
 fn same_volume(root: &Path, staging: &Path) -> io::Result<bool> {
     use std::os::unix::fs::MetadataExt;
@@ -453,11 +560,11 @@ fn scan_media(directory: &Path, mut items: Option<&mut Vec<(String, u64)>>) -> i
         }
         let mut has_audio = false;
         let mut bytes = 0u64;
-        for file in [AUDIO, MP3, VIDEO] {
+        for file in [AUDIO, MP3, VIDEO, VIDEO_ONLY] {
             match fs::symlink_metadata(entry.path().join(file)) {
                 Ok(meta) if meta.is_file() => {
                     bytes = bytes.saturating_add(meta.len());
-                    has_audio |= file != VIDEO;
+                    has_audio |= matches!(file, AUDIO | MP3);
                 }
                 Ok(_) => {}
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -475,7 +582,7 @@ fn scan_media(directory: &Path, mut items: Option<&mut Vec<(String, u64)>>) -> i
 fn media_name(dir: &Path, mode: &str) -> Option<&'static str> {
     let names: &[&str] = match mode {
         "audio" => &[AUDIO, MP3],
-        "video" => &[VIDEO],
+        "video" => &[VIDEO, VIDEO_ONLY],
         _ => return None,
     };
     if !fs::symlink_metadata(dir).ok()?.is_dir() {

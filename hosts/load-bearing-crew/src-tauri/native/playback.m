@@ -4,6 +4,7 @@
 
 #import <AppKit/AppKit.h>
 #import <AVFoundation/AVFoundation.h>
+#import <MediaPlayer/MediaPlayer.h>
 #import <QuartzCore/QuartzCore.h>
 #import <WebKit/WebKit.h>
 #include <math.h>
@@ -81,12 +82,14 @@ static NSDictionary *spectrumDictionary(MTAudioProcessingTapRef tap) {
 }
 
 @interface NastiPlayerController : NSObject
-- (void)loadURL:(NSURL *)url identifier:(NSString *)identifier video:(BOOL)video
+- (void)loadURL:(NSURL *)url companion:(NSURL *)companion identifier:(NSString *)identifier video:(BOOL)video
      positionMs:(uint64_t)position playbackRequested:(BOOL)requested source:(NastiPlaybackSource)source;
 - (void)setPlaybackRequested:(BOOL)requested;
 - (void)startAlignedAtMilliseconds:(uint64_t)position;
 - (void)seekMilliseconds:(uint64_t)position;
 - (void)setVolume:(float)volume;
+@property(nonatomic, copy) NSString *mediaTitle;
+@property(nonatomic, copy) NSString *mediaArtist;
 - (void)setAudioOutputUID:(NSString *)identifier;
 - (BOOL)setVideoFrame:(NSRect)rect window:(NSWindow *)window;
 - (void)clearVideoFrame;
@@ -99,6 +102,7 @@ static void *itemStatusContext = &itemStatusContext;
 @implementation NastiPlayerController {
     AVPlayer *_player;
     AVURLAsset *_asset;
+    AVURLAsset *_companion;
     AVPlayerItem *_item;
     MTAudioProcessingTapRef _tap;
     id _endNotification;
@@ -130,6 +134,7 @@ static void *itemStatusContext = &itemStatusContext;
 - (void)replaceCurrentAsset {
     _seekRevision += 1;
     [_asset cancelLoading];
+    [_companion cancelLoading];
     [_player pause];
     _videoSurface.hidden = YES;
     _videoSurface.playerLayer.player = nil;
@@ -148,6 +153,7 @@ static void *itemStatusContext = &itemStatusContext;
     [_player replaceCurrentItemWithPlayerItem:nil];
     _item = nil;
     _asset = nil;
+    _companion = nil;
     if (_source.release) {
         _source.release(_source.context);
         _source = (NastiPlaybackSource){0};
@@ -173,7 +179,7 @@ static void *itemStatusContext = &itemStatusContext;
     }
 }
 
-- (void)loadURL:(NSURL *)url identifier:(NSString *)identifier video:(BOOL)video
+- (void)loadURL:(NSURL *)url companion:(NSURL *)companion identifier:(NSString *)identifier video:(BOOL)video
      positionMs:(uint64_t)position playbackRequested:(BOOL)requested source:(NastiPlaybackSource)source {
     [self replaceCurrentAsset];
     _source = source;
@@ -195,6 +201,14 @@ static void *itemStatusContext = &itemStatusContext;
 
     AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
     _asset = asset;
+    if (companion) {
+        if (!video || ![companion.scheme isEqualToString:@"http"] || ![companion.host isEqualToString:@"127.0.0.1"]) {
+            [self reportError:nil];
+            return;
+        }
+        [self loadVideoAsset:asset companion:[AVURLAsset URLAssetWithURL:companion options:nil]];
+        return;
+    }
     __weak NastiPlayerController *weakSelf = self;
     [asset loadTracksWithMediaType:AVMediaTypeAudio completionHandler:^(NSArray<AVAssetTrack *> *tracks, NSError *error) {
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -208,6 +222,36 @@ static void *itemStatusContext = &itemStatusContext;
             }
             [player attachItem:[AVPlayerItem playerItemWithAsset:asset] audioTrack:tracks.firstObject];
         });
+    }];
+}
+
+- (void)loadVideoAsset:(AVURLAsset *)asset companion:(AVURLAsset *)audioAsset {
+    _companion = audioAsset;
+    __weak NastiPlayerController *weakSelf = self;
+    [asset loadTracksWithMediaType:AVMediaTypeVideo completionHandler:^(NSArray<AVAssetTrack *> *videoTracks, NSError *videoError) {
+        [audioAsset loadTracksWithMediaType:AVMediaTypeAudio completionHandler:^(NSArray<AVAssetTrack *> *audioTracks, NSError *audioError) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NastiPlayerController *player = weakSelf;
+                if (!player || player->_asset != asset) return;
+                AVAssetTrack *video = videoTracks.firstObject;
+                AVAssetTrack *audio = audioTracks.firstObject;
+                if (videoError || audioError || !video || !audio) {
+                    [player reportError:videoError ?: audioError];
+                    return;
+                }
+                AVMutableComposition *composition = [AVMutableComposition composition];
+                AVMutableCompositionTrack *image = [composition addMutableTrackWithMediaType:AVMediaTypeVideo preferredTrackID:kCMPersistentTrackID_Invalid];
+                AVMutableCompositionTrack *sound = [composition addMutableTrackWithMediaType:AVMediaTypeAudio preferredTrackID:kCMPersistentTrackID_Invalid];
+                NSError *error = nil;
+                if (![image insertTimeRange:video.timeRange ofTrack:video atTime:kCMTimeZero error:&error] ||
+                    ![sound insertTimeRange:audio.timeRange ofTrack:audio atTime:kCMTimeZero error:&error]) {
+                    [player reportError:error];
+                    return;
+                }
+                image.preferredTransform = video.preferredTransform;
+                [player attachItem:[AVPlayerItem playerItemWithAsset:composition] audioTrack:sound];
+            });
+        }];
     }];
 }
 
@@ -446,6 +490,7 @@ static void *itemStatusContext = &itemStatusContext;
 
 static NastiPlayerController *controller;
 static NastiPlayerController *candidate;
+static NastiPlayerController *parkedAudio;
 static NSString *selectedOutput;
 static AudioObjectPropertyListenerBlock outputListener;
 
@@ -457,10 +502,113 @@ static NastiPlayerController *currentController(void) {
     return controller;
 }
 
+static NSTimer *nowPlayingTimer;
+static NSDictionary *lastNowPlaying;
+static MPNowPlayingPlaybackState lastNowPlayingState = MPNowPlayingPlaybackStateUnknown;
+static NSArray *remoteTargets;
+
+static void publishNowPlaying(void) {
+    NSDictionary *snapshot = [controller snapshot];
+    NSString *status = snapshot[@"status"];
+    MPNowPlayingInfoCenter *center = MPNowPlayingInfoCenter.defaultCenter;
+    if (!snapshot || snapshot[@"videoId"] == NSNull.null || [status isEqual:@"error"]) {
+        if (lastNowPlaying) {
+            center.nowPlayingInfo = nil;
+            center.playbackState = MPNowPlayingPlaybackStateStopped;
+            lastNowPlaying = nil;
+            lastNowPlayingState = MPNowPlayingPlaybackStateStopped;
+        }
+        return;
+    }
+    BOOL playing = [status isEqual:@"playing"];
+    NSDictionary *info = @{
+        MPMediaItemPropertyTitle: controller.mediaTitle.length ? controller.mediaTitle : snapshot[@"videoId"],
+        MPMediaItemPropertyArtist: controller.mediaArtist ?: @"",
+        MPMediaItemPropertyPlaybackDuration: @([snapshot[@"durationMs"] doubleValue] / 1000.0),
+        MPNowPlayingInfoPropertyElapsedPlaybackTime: @([snapshot[@"positionMs"] doubleValue] / 1000.0),
+        MPNowPlayingInfoPropertyPlaybackRate: @(playing ? 1 : 0),
+        MPNowPlayingInfoPropertyMediaType: @([snapshot[@"mode"] isEqual:@"video"] ? MPNowPlayingInfoMediaTypeVideo : MPNowPlayingInfoMediaTypeAudio)
+    };
+    MPNowPlayingPlaybackState state = playing ? MPNowPlayingPlaybackStatePlaying :
+        [status isEqual:@"ended"] ? MPNowPlayingPlaybackStateStopped : MPNowPlayingPlaybackStatePaused;
+    if (![info isEqual:lastNowPlaying]) {
+        center.nowPlayingInfo = info;
+        lastNowPlaying = info;
+    }
+    if (lastNowPlayingState != state) {
+        center.playbackState = state;
+        lastNowPlayingState = state;
+    }
+}
+
+static MPRemoteCommandHandlerStatus requestTransport(BOOL playing, BOOL toggle) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSDictionary *snapshot = [controller snapshot];
+        if (snapshot && snapshot[@"videoId"] != NSNull.null) {
+            BOOL requested = toggle ? ![snapshot[@"status"] isEqual:@"playing"] : playing;
+            [controller setPlaybackRequested:requested];
+            publishNowPlaying();
+        }
+    });
+    return MPRemoteCommandHandlerStatusSuccess;
+}
+
+static void installMediaCommands(void) {
+    if (nowPlayingTimer) return;
+    MPRemoteCommandCenter *center = MPRemoteCommandCenter.sharedCommandCenter;
+    NSArray<MPRemoteCommand *> *commands = @[center.playCommand, center.pauseCommand,
+        center.togglePlayPauseCommand, center.changePlaybackPositionCommand];
+    for (MPRemoteCommand *command in commands) command.enabled = YES;
+    remoteTargets = @[
+        [center.playCommand addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
+            (void)event;
+            return requestTransport(YES, NO);
+        }],
+        [center.pauseCommand addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
+            (void)event;
+            return requestTransport(NO, NO);
+        }],
+        [center.togglePlayPauseCommand addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
+            (void)event;
+            return requestTransport(NO, YES);
+        }],
+        [center.changePlaybackPositionCommand addTargetWithHandler:^MPRemoteCommandHandlerStatus(MPRemoteCommandEvent *event) {
+            double seconds = ((MPChangePlaybackPositionCommandEvent *)event).positionTime;
+            if (!isfinite(seconds) || seconds < 0 || seconds >= (double)INT64_MAX / 1000)
+                return MPRemoteCommandHandlerStatusCommandFailed;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [controller seekMilliseconds:(uint64_t)llround(seconds * 1000)];
+                publishNowPlaying();
+            });
+            return MPRemoteCommandHandlerStatusSuccess;
+        }]
+    ];
+    nowPlayingTimer = [NSTimer timerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer) {
+        (void)timer;
+        publishNowPlaying();
+    }];
+    [NSRunLoop.mainRunLoop addTimer:nowPlayingTimer forMode:NSRunLoopCommonModes];
+}
+
+static void removeMediaCommands(void) {
+    [nowPlayingTimer invalidate];
+    nowPlayingTimer = nil;
+    MPRemoteCommandCenter *center = MPRemoteCommandCenter.sharedCommandCenter;
+    NSArray<MPRemoteCommand *> *commands = @[center.playCommand, center.pauseCommand,
+        center.togglePlayPauseCommand, center.changePlaybackPositionCommand];
+    [remoteTargets enumerateObjectsUsingBlock:^(id target, NSUInteger index, BOOL *stop) {
+        (void)stop;
+        [commands[index] removeTarget:target];
+    }];
+    remoteTargets = nil;
+    publishNowPlaying();
+}
+
 static void applyOutput(NSString *identifier) {
     selectedOutput = [identifier copy];
     [controller setAudioOutputUID:selectedOutput];
     [candidate setAudioOutputUID:selectedOutput];
+    [parkedAudio setAudioOutputUID:selectedOutput];
 }
 
 static BOOL containsOutput(NSArray<NSDictionary<NSString *, NSString *> *> *outputs, NSString *identifier) {
@@ -489,38 +637,74 @@ static void observeOutputDevices(void) {
     }
 }
 
-void nasti_native_load(const char *url, const char *video_id, bool is_video,
+void nasti_native_load(const char *url, const char *audio_url, const char *video_id, const char *title, const char *artist, bool is_video,
                        uint64_t position_ms, bool autoplay, NastiPlaybackSource source) {
     @autoreleasepool {
+        [parkedAudio shutdown];
+        parkedAudio = nil;
         NSString *urlString = [NSString stringWithUTF8String:url];
+        currentController().mediaTitle = [NSString stringWithUTF8String:title];
+        currentController().mediaArtist = [NSString stringWithUTF8String:artist];
+        installMediaCommands();
         [currentController() loadURL:[NSURL URLWithString:urlString]
+                           companion:audio_url ? [NSURL URLWithString:[NSString stringWithUTF8String:audio_url]] : nil
                           identifier:[NSString stringWithUTF8String:video_id]
                                video:is_video positionMs:position_ms playbackRequested:autoplay source:source];
+        publishNowPlaying();
     }
 }
 
-void nasti_native_prepare(const char *url, const char *video_id, bool is_video, NastiPlaybackSource source) {
+void nasti_native_prepare(const char *url, const char *audio_url, const char *video_id, const char *title, const char *artist, bool is_video, NastiPlaybackSource source) {
     @autoreleasepool {
         nasti_native_cancel_preparation();
         candidate = [[NastiPlayerController alloc] init];
+        candidate.mediaTitle = [NSString stringWithUTF8String:title];
+        candidate.mediaArtist = [NSString stringWithUTF8String:artist];
         [candidate setAudioOutputUID:selectedOutput];
         [candidate loadURL:[NSURL URLWithString:[NSString stringWithUTF8String:url]]
+                 companion:audio_url ? [NSURL URLWithString:[NSString stringWithUTF8String:audio_url]] : nil
                 identifier:[NSString stringWithUTF8String:video_id]
                      video:is_video positionMs:0 playbackRequested:NO source:source];
     }
 }
 
+bool nasti_native_prepare_parked_audio(const char *video_id) {
+    NSString *identifier = [NSString stringWithUTF8String:video_id];
+    NSDictionary *audio = [parkedAudio snapshot];
+    if (![audio[@"videoId"] isEqual:identifier] || [audio[@"status"] isEqual:@"error"]) {
+        return false;
+    }
+    nasti_native_cancel_preparation();
+    candidate = parkedAudio;
+    return true;
+}
+
 void nasti_native_seek_preparation(uint64_t position_ms) {
-    [candidate seekMilliseconds:position_ms];
+    if (candidate != parkedAudio) [candidate seekMilliseconds:position_ms];
 }
 
 bool nasti_native_commit_preparation(bool autoplay, bool align_time, uint64_t position_ms) {
     NSDictionary *prepared = [candidate snapshot];
-    if (![prepared[@"status"] isEqualToString:@"ready"]) {
+    BOOL restoring = candidate && candidate == parkedAudio;
+    if (!restoring && ![prepared[@"status"] isEqualToString:@"ready"]) {
         return false;
     }
-    float volume = [[currentController() snapshot][@"volume"] floatValue];
-    [controller shutdown];
+    NSDictionary *previous = [currentController() snapshot];
+    float volume = [previous[@"volume"] floatValue];
+    BOOL enteringVideo = [prepared[@"mode"] isEqual:@"video"] && [previous[@"mode"] isEqual:@"audio"]
+        && previous[@"videoId"] != NSNull.null && ![previous[@"status"] isEqual:@"error"];
+    if (enteringVideo) {
+        [parkedAudio shutdown];
+        [controller setPlaybackRequested:NO];
+        parkedAudio = controller;
+    } else {
+        [controller shutdown];
+        if (restoring) parkedAudio = nil;
+        else if ([prepared[@"mode"] isEqual:@"audio"]) {
+            [parkedAudio shutdown];
+            parkedAudio = nil;
+        }
+    }
     controller = candidate;
     candidate = nil;
     [controller setVolume:volume];
@@ -534,20 +718,24 @@ bool nasti_native_commit_preparation(bool autoplay, bool align_time, uint64_t po
             if (drift > 80) [controller seekMilliseconds:position_ms];
         }
     }
+    installMediaCommands();
+    publishNowPlaying();
     return true;
 }
 
 void nasti_native_cancel_preparation(void) {
-    [candidate shutdown];
+    if (candidate != parkedAudio) [candidate shutdown];
     candidate = nil;
 }
 
 void nasti_native_set_playing(bool playing) {
     [currentController() setPlaybackRequested:playing];
+    publishNowPlaying();
 }
 
 void nasti_native_seek(uint64_t position_ms) {
     [currentController() seekMilliseconds:position_ms];
+    publishNowPlaying();
 }
 
 void nasti_native_set_volume(float volume) {
@@ -627,7 +815,10 @@ void nasti_native_shutdown(void) {
     }
     nasti_native_cancel_preparation();
     [controller shutdown];
+    [parkedAudio shutdown];
+    parkedAudio = nil;
     controller = nil;
+    if (nowPlayingTimer) removeMediaCommands();
     selectedOutput = nil;
     if (outputListener) {
         AudioObjectRemovePropertyListenerBlock(kAudioObjectSystemObject, &NastiPlaybackDevicesProperty,

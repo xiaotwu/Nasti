@@ -1,4 +1,4 @@
-import type { ArchiveSearchResult, LyricLine, PlaylistColumn, TrackItem } from "../../../contracts/ipc-commands";
+import type { LyricLine, PlaylistColumn, TrackItem } from "../../../contracts/ipc-commands";
 import { icon, type IconName } from "./icons";
 import { dateLocale, t } from "./i18n";
 import { durationLabel, element, safeAssetUrl } from "./layout";
@@ -63,7 +63,7 @@ export function makeTrackRow(track: TrackItem, column: PlaylistColumn | null, in
   copy.append(title, artists);
   const time = document.createElement("span");
   time.className = "track-time";
-  time.textContent = durationLabel(track.durationSec * 1000);
+  time.textContent = track.durationSec > 0 ? durationLabel(track.durationSec * 1000) : "";
   inspect.append(overview || !column ? cover : ordinal, copy, time);
   row.append(inspect, actionButton("play", "play-result", t(`播放 ${track.title}`, `Play ${track.title}`)));
   if (overview) row.append(actionButton("locate", "locate-result", t(`定位档案 ${track.title}`, `Locate cassette for ${track.title}`)));
@@ -75,37 +75,10 @@ export function makePlaylistRow(playlist: PlaylistColumn, importable: boolean): 
   row.className = "setting-row";
   row.dataset.playlistId = playlist.playlistId;
   const label = document.createElement("span");
-  label.textContent = `${playlist.title} · ${trackCountLabel(playlist.tracks.length)}`;
+  label.textContent = playlist.tracks.length ? `${playlist.title} · ${trackCountLabel(playlist.tracks.length)}` : playlist.title;
   row.append(label);
   row.append(actionButton(importable ? "import" : "radar", importable ? "import-result" : "view-playlist",
     importable ? t(`导入 ${playlist.title}`, `Import ${playlist.title}`) : t(`浏览 ${playlist.title}`, `Browse ${playlist.title}`)));
-  return row;
-}
-
-export function makeArchiveResult(result: ArchiveSearchResult): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = "setting-row archive-release";
-  const copy = document.createElement("span");
-  copy.className = "track-copy";
-  const title = document.createElement("strong");
-  title.textContent = result.matchingTrack?.title ?? result.title;
-  const detail = document.createElement("small");
-  detail.textContent = [
-    result.matchingTrack?.artist ?? result.artist,
-    result.matchingTrack ? result.title : "",
-    trackCountLabel(result.trackCount),
-  ].filter(Boolean).join(" · ");
-  const license = document.createElement("a");
-  license.href = result.licenseUrl;
-  license.target = "_blank";
-  license.rel = "noopener noreferrer";
-  license.className = "archive-license";
-  license.textContent = result.license;
-  copy.append(title, detail, license);
-  const importButton = actionButton("import", "import-archive-result", t(`导入 ${result.title}`, `Import ${result.title}`));
-  importButton.dataset.sourceUrl = result.sourceUrl;
-  if (result.matchingTrack) importButton.dataset.videoId = result.matchingTrack.videoId;
-  row.append(copy, importButton);
   return row;
 }
 

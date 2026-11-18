@@ -1,5 +1,6 @@
 use crate::archive_media::{ArchiveHttp, ArchiveMedia, MP3_MIME};
-use crate::vault::{valid_media_id, Vault, VaultError, VaultPlaybackFile};
+use crate::vault::{valid_media_id, Vault, VaultError, VaultPlaybackFile, VIDEO_ONLY};
+use crate::youtube_media::{youtube_vault_key, YoutubeHttp, YoutubeSearchResults, YoutubeStream};
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::header::{
@@ -44,12 +45,15 @@ struct Registry {
     sources: HashMap<String, MediaSource>,
     playbacks: RwLock<HashMap<String, Arc<PlaybackEntry>>>,
     http: ArchiveHttp,
+    youtube: YoutubeHttp,
     vault: Arc<Vault>,
 }
 
 enum OriginalMedia {
     Bundled(PathBuf),
     Archive(ArchiveMedia),
+    Youtube(YoutubeStream),
+    VaultOnly,
 }
 
 struct PlaybackEntry {
@@ -81,6 +85,7 @@ impl PlaybackEntry {
 pub struct PlaybackSource {
     key: String,
     url: String,
+    companion: Option<Box<PlaybackSource>>,
     entry: Arc<PlaybackEntry>,
     registry: Arc<Registry>,
 }
@@ -90,7 +95,14 @@ impl PlaybackSource {
         &self.url
     }
 
+    pub fn companion_url(&self) -> Option<&str> {
+        self.companion.as_ref().map(|source| source.url())
+    }
+
     pub fn finish(&self) {
+        if let Some(companion) = &self.companion {
+            companion.finish();
+        }
         let mut state = self
             .entry
             .vault
@@ -101,6 +113,9 @@ impl PlaybackSource {
     }
 
     pub fn restart(&self) {
+        if let Some(companion) = &self.companion {
+            companion.restart();
+        }
         let mut state = self
             .entry
             .vault
@@ -147,6 +162,7 @@ impl MediaPipe {
                 .collect(),
             playbacks: RwLock::new(HashMap::new()),
             http: ArchiveHttp::new().map_err(io::Error::other)?,
+            youtube: YoutubeHttp::new().map_err(io::Error::other)?,
             vault,
         });
         let router = Router::new()
@@ -176,6 +192,71 @@ impl MediaPipe {
         self.begin_playback(id, "audio", OriginalMedia::Archive(media))
     }
 
+    pub async fn youtube_search(
+        &self,
+        query: &str,
+        filter: &str,
+    ) -> io::Result<YoutubeSearchResults> {
+        self.registry.youtube.search(query, filter).await
+    }
+
+    pub async fn youtube_playback(&self, id: &str, mode: &str) -> io::Result<PlaybackSource> {
+        let key = youtube_vault_key(id).ok_or_else(|| io::Error::other("YouTube 视频 ID 无效"))?;
+        let register = |mode, original| {
+            self.begin_playback(&key, mode, original)
+                .ok_or_else(|| io::Error::other("无法创建 YouTube 播放会话"))
+        };
+        if let Some(path) = self.registry.vault.path(&key, mode) {
+            let mut source = register(mode, OriginalMedia::VaultOnly)?;
+            if path.file_name().is_some_and(|name| name == VIDEO_ONLY) {
+                source.companion = Some(Box::new(register("audio", OriginalMedia::VaultOnly)?));
+            }
+            return Ok(source);
+        }
+        #[cfg(target_os = "macos")]
+        if mode == "video" {
+            match self.registry.youtube.resolve_video(id).await {
+                Ok((video, audio)) => {
+                    let mut source = register(mode, OriginalMedia::Youtube(video))?;
+                    if let Some(audio) = audio {
+                        // The audio paired with this video must keep the extractor's common timeline.
+                        source.companion =
+                            Some(Box::new(self.begin_youtube_companion(&key, audio)?));
+                    }
+                    return Ok(source);
+                }
+                Err(_) => {} // The separately encoded streams may be unavailable to this client.
+            }
+        }
+        register(
+            mode,
+            OriginalMedia::Youtube(self.registry.youtube.resolve(id, mode).await?),
+        )
+    }
+
+    #[cfg(target_os = "macos")]
+    fn begin_youtube_companion(
+        &self,
+        key: &str,
+        audio: YoutubeStream,
+    ) -> io::Result<PlaybackSource> {
+        self.begin_playback(key, "audio-companion", OriginalMedia::Youtube(audio))
+            .ok_or_else(|| io::Error::other("无法创建 YouTube 视频的音轨"))
+    }
+
+    pub async fn save_youtube(&self, id: String, include_video: bool) -> Result<(), VaultError> {
+        let key = youtube_vault_key(&id).ok_or(VaultError::InvalidId)?;
+        let registry = Arc::clone(&self.registry);
+        tokio::spawn(async move {
+            registry
+                .vault
+                .download_youtube(&key, &id, include_video, &registry.youtube)
+                .await
+        })
+        .await
+        .map_err(|_| VaultError::Busy)?
+    }
+
     fn begin_playback(
         &self,
         media_id: &str,
@@ -197,6 +278,7 @@ impl MediaPipe {
         Some(PlaybackSource {
             url: format!("{}/v1/{}/{key}", self.origin, self.registry.token),
             key,
+            companion: None,
             entry,
             registry: Arc::clone(&self.registry),
         })
@@ -276,6 +358,33 @@ async fn serve(
         OriginalMedia::Archive(media) => {
             serve_archive(&registry.http, media, &headers, method).await
         }
+        OriginalMedia::Youtube(stream) => {
+            let Some(range) = ResponseRange::from_headers(&headers, stream.size) else {
+                return out_of_range(stream.size);
+            };
+            if method == Method::HEAD {
+                return range.response(stream.size, mime, Body::empty());
+            }
+            let first_end = range
+                .end()
+                .min(range.start.saturating_add(YOUTUBE_RANGE_CHUNK - 1));
+            match registry.youtube.get(stream, range.start, first_end).await {
+                Ok(first) => range.response(
+                    stream.size,
+                    mime,
+                    youtube_body(
+                        registry.clone(),
+                        playback.clone(),
+                        first,
+                        range.start,
+                        first_end,
+                        range.end(),
+                    ),
+                ),
+                Err(_) => empty_response(StatusCode::BAD_GATEWAY),
+            }
+        }
+        OriginalMedia::VaultOnly => empty_response(StatusCode::NOT_FOUND),
     }
 }
 
@@ -371,8 +480,60 @@ async fn serve_archive(
     let Ok(response) = response else {
         return empty_response(StatusCode::BAD_GATEWAY);
     };
+    range.response(size, MP3_MIME, exact_body(response, range.length))
+}
+
+const YOUTUBE_RANGE_CHUNK: u64 = 4 * 1024 * 1024;
+
+fn youtube_body(
+    registry: Arc<Registry>,
+    playback: Arc<PlaybackEntry>,
+    first: reqwest::Response,
+    start: u64,
+    first_end: u64,
+    end: u64,
+) -> Body {
+    Body::from_stream(futures_util::stream::try_unfold(
+        (registry, playback, first, start, first_end),
+        move |(registry, playback, mut response, offset, mut segment_end)| async move {
+            if offset > end {
+                return Ok(None);
+            }
+            if offset > segment_end {
+                let OriginalMedia::Youtube(stream) = &playback.original else {
+                    unreachable!()
+                };
+                segment_end = end.min(offset.saturating_add(YOUTUBE_RANGE_CHUNK - 1));
+                response = registry.youtube.get(stream, offset, segment_end).await?;
+            }
+            let chunk = response
+                .chunk()
+                .await
+                .map_err(|error| io::Error::other(error.without_url()))?
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "Incomplete YouTube media segment",
+                    )
+                })?;
+            let offset = offset + chunk.len() as u64;
+            if offset > segment_end + 1 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Oversized YouTube media segment",
+                ));
+            }
+            Ok(Some((
+                chunk,
+                (registry, playback, response, offset, segment_end),
+            )))
+        },
+    ))
+}
+
+fn exact_body(response: reqwest::Response, length: u64) -> Body {
     let body = futures_util::stream::try_unfold(
-        (response, range.length),
+        (response, length),
         |(mut response, remaining)| async move {
             if remaining == 0 {
                 return Ok(None);
@@ -380,17 +541,17 @@ async fn serve_archive(
             let chunk = response
                 .chunk()
                 .await
-                .map_err(io::Error::other)?
+                .map_err(|error| io::Error::other(error.without_url()))?
                 .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::UnexpectedEof, "Incomplete archive response")
+                    io::Error::new(io::ErrorKind::UnexpectedEof, "Incomplete media response")
                 })?;
             let left = remaining.checked_sub(chunk.len() as u64).ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "Oversized archive response")
+                io::Error::new(io::ErrorKind::InvalidData, "Oversized media response")
             })?;
             Ok::<_, io::Error>(Some((chunk, (response, left))))
         },
     );
-    range.response(size, MP3_MIME, Body::from_stream(body))
+    Body::from_stream(body)
 }
 
 fn empty_response(status: StatusCode) -> Response<Body> {

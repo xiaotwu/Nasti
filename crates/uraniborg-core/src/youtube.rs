@@ -1,4 +1,7 @@
-use crate::models::{YoutubePlaylist, YoutubePlaylistItem, YoutubePlaylistSummary, YoutubePrivacy};
+use crate::models::{
+    ArtistRef, PlaylistColumn, SearchResults, TrackItem, YoutubePlaylist, YoutubePlaylistItem,
+    YoutubePlaylistSummary, YoutubePrivacy,
+};
 use reqwest::{Client, Method, RequestBuilder, Response, StatusCode, Url};
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::{json, Value};
@@ -141,6 +144,83 @@ impl YoutubeApi {
             items,
             imported_at: None,
         })
+    }
+
+    pub async fn search(
+        &self,
+        query: &str,
+        filter: &str,
+        token: &str,
+    ) -> Result<SearchResults, YoutubeError> {
+        let mut result = SearchResults {
+            songs: vec![],
+            videos: vec![],
+            playlists: vec![],
+        };
+        if query.trim().is_empty() {
+            return Ok(result);
+        }
+        if matches!(filter, "all" | "songs" | "videos") {
+            let page: Page<SearchHit> =
+                read_json(self.request(Method::GET, "search", token)?.query(&[
+                    ("part", "snippet"),
+                    ("q", query.trim()),
+                    ("type", "video"),
+                    ("videoCategoryId", "10"),
+                    ("maxResults", "25"),
+                ]))
+                .await?;
+            for hit in page.items {
+                let Some(id) = hit.id.video_id.filter(|id| valid_video_id(id)) else {
+                    continue;
+                };
+                let topic = hit.snippet.channel_title.ends_with(" - Topic");
+                if topic && filter != "videos" {
+                    result.songs.push(music_track(
+                        &id,
+                        hit.snippet.title,
+                        hit.snippet
+                            .channel_title
+                            .trim_end_matches(" - Topic")
+                            .into(),
+                        false,
+                    ));
+                } else if !topic && filter != "songs" {
+                    result.videos.push(music_track(
+                        &id,
+                        hit.snippet.title,
+                        hit.snippet.channel_title,
+                        true,
+                    ));
+                }
+            }
+        }
+        if matches!(filter, "all" | "playlists") {
+            let page: Page<SearchHit> =
+                read_json(self.request(Method::GET, "search", token)?.query(&[
+                    ("part", "snippet"),
+                    ("q", query.trim()),
+                    ("type", "playlist"),
+                    ("maxResults", "25"),
+                ]))
+                .await?;
+            result.playlists = page
+                .items
+                .into_iter()
+                .filter_map(|hit| {
+                    Some(PlaylistColumn {
+                        playlist_id: hit.id.playlist_id.filter(|id| valid_playlist_id(id))?,
+                        title: hit.snippet.title,
+                        subtitle: Some(hit.snippet.channel_title),
+                        column_index: 0,
+                        code_name: String::new(),
+                        is_editable: false,
+                        tracks: vec![],
+                    })
+                })
+                .collect();
+        }
+        Ok(result)
     }
 
     pub async fn create(
@@ -387,12 +467,87 @@ impl<'a> YoutubeAccess<'a> {
     }
 }
 
+#[derive(Deserialize)]
+struct SearchHit {
+    id: SearchHitId,
+    snippet: SearchSnippet,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchHitId {
+    video_id: Option<String>,
+    playlist_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchSnippet {
+    title: String,
+    channel_title: String,
+}
+
+pub fn playlist_column(summary: YoutubePlaylistSummary, index: usize) -> PlaylistColumn {
+    PlaylistColumn {
+        playlist_id: summary.id,
+        column_index: index,
+        code_name: format!("RL-{:02}", index + 1),
+        title: summary.title,
+        subtitle: Some(summary.description),
+        is_editable: summary.can_edit,
+        tracks: Vec::new(),
+    }
+}
+
+pub fn music_track(id: &str, title: String, artist: String, video: bool) -> TrackItem {
+    TrackItem {
+        video_id: id.into(),
+        mv_video_id: video.then(|| id.into()),
+        mv_timeline_aligned: false,
+        entry_id: None,
+        title,
+        artists: vec![ArtistRef {
+            browse_id: None,
+            name: artist,
+        }],
+        album: None,
+        duration_sec: 0,
+        thumbnail_square_url: format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"),
+        thumbnail_wide_url: Some(format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg")),
+        is_vault_downloaded: false,
+        is_vault_video_downloaded: false,
+        loudness_db: None,
+        track_number: None,
+        source_name: Some("YouTube Music".into()),
+        source_url: None,
+        license: None,
+        license_url: None,
+        audio_url: None,
+        mv_url: None,
+    }
+}
+
 pub fn playlist_id(reference: &str) -> Result<String, YoutubeError> {
     let reference = reference.trim();
+    if let Some(id) = reference
+        .strip_prefix("VL")
+        .filter(|id| id.starts_with("PL") && valid_playlist_id(id))
+    {
+        return Ok(id.into());
+    }
     if valid_playlist_id(reference) {
         return Ok(reference.into());
     }
     let url = youtube_url(reference).ok_or(YoutubeError::InvalidPlaylistId)?;
+    if url.host_str() == Some("music.youtube.com") {
+        if let Some(id) = url
+            .path()
+            .strip_prefix("/browse/VL")
+            .filter(|id| valid_playlist_id(id))
+        {
+            return Ok(id.into());
+        }
+    }
     let id = query_value(&url, "list").filter(|id| valid_playlist_id(id));
     id.ok_or(YoutubeError::InvalidPlaylistId)
 }
@@ -824,6 +979,11 @@ mod tests {
 
     #[test]
     fn references_use_supported_hosts_and_single_identifiers() {
+        assert_eq!(
+            playlist_id("https://music.youtube.com/browse/VLPLexample1234").unwrap(),
+            "PLexample1234"
+        );
+        assert_eq!(playlist_id("VLPLexample1234").unwrap(), "PLexample1234");
         assert_eq!(
             playlist_id(" https://music.youtube.com/playlist?list=PL_test&si=tag ").unwrap(),
             PLAYLIST

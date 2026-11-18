@@ -454,6 +454,7 @@ dependencies = [
  "futures-util",
  "reqwest",
  "serde",
+ "serde_json",
  "sha1",
  "tempfile",
  "thiserror 2.0.21",

@@ -1,6 +1,5 @@
 import type { PlaylistColumn, TrackItem } from "../../../contracts/ipc-commands";
 
-export const ARCHIVE_COLUMNS = 9;
 export const ARCHIVE_ROWS = 32;
 export const COLUMN_SPACING = 5.2;
 export const ROW_SPACING = 0.62;
@@ -61,7 +60,7 @@ export function archiveColumns(columns: readonly PlaylistColumn[]) {
   const bySlot = new Map<number, PlaylistColumn>();
   for (const column of columns) {
     const index = column.columnIndex;
-    if (Number.isInteger(index) && index >= 0 && index < ARCHIVE_COLUMNS && !bySlot.has(index)) {
+    if (Number.isInteger(index) && index >= 0 && !bySlot.has(index)) {
       bySlot.set(index, column);
     }
   }

@@ -143,7 +143,10 @@ mod native {
     unsafe extern "C" {
         fn nasti_native_load(
             url: *const c_char,
+            audio_url: *const c_char,
             video_id: *const c_char,
+            title: *const c_char,
+            artist: *const c_char,
             is_video: bool,
             position_ms: u64,
             autoplay: bool,
@@ -152,10 +155,14 @@ mod native {
         fn nasti_native_set_playing(playing: bool);
         fn nasti_native_prepare(
             url: *const c_char,
+            audio_url: *const c_char,
             video_id: *const c_char,
+            title: *const c_char,
+            artist: *const c_char,
             is_video: bool,
             source: NativePlaybackSource,
         );
+        fn nasti_native_prepare_parked_audio(video_id: *const c_char) -> bool;
         fn nasti_native_copy_preparation() -> *mut c_char;
         fn nasti_native_seek_preparation(position_ms: u64);
         fn nasti_native_commit_preparation(
@@ -221,6 +228,10 @@ mod native {
         }
     }
 
+    fn media_label(value: Option<String>) -> CString {
+        CString::new(value.unwrap_or_default().replace('\0', "")).expect("NUL was removed")
+    }
+
     pub(super) async fn load(
         app: AppHandle,
         args: PlaybackLoadArgs,
@@ -229,7 +240,14 @@ mod native {
         let source =
             catalog_commands::resolve_playback(&app, &args.video_id, args.mode.as_str()).await?;
         let url = CString::new(source.url()).map_err(|_| "授权曲目地址无效".to_owned())?;
+        let audio_url = source
+            .companion_url()
+            .map(CString::new)
+            .transpose()
+            .map_err(|_| "视频音轨地址无效".to_owned())?;
         let identifier = CString::new(args.video_id).map_err(|_| "曲目标识无效".to_owned())?;
+        let title = media_label(args.title);
+        let artist = media_label(args.artist);
         on_main(app, move || {
             if LOAD_REVISION.load(Ordering::Relaxed) != revision {
                 return Err("已切换到另一首曲目".into());
@@ -240,7 +258,12 @@ mod native {
                 nasti_native_cancel_preparation();
                 nasti_native_load(
                     url.as_ptr(),
+                    audio_url
+                        .as_ref()
+                        .map_or(std::ptr::null(), |url| url.as_ptr()),
                     identifier.as_ptr(),
+                    title.as_ptr(),
+                    artist.as_ptr(),
                     args.mode == MediaMode::Video,
                     args.position_ms.unwrap_or(0),
                     args.autoplay.unwrap_or(false),
@@ -268,7 +291,9 @@ mod native {
                 })
                 .await?;
                 match state.status {
-                    PlaybackStatus::Ready | PlaybackStatus::Paused => return Ok(()),
+                    PlaybackStatus::Ready | PlaybackStatus::Paused | PlaybackStatus::Ended => {
+                        return Ok(())
+                    }
                     PlaybackStatus::Error => {
                         return Err(state.error.unwrap_or_else(|| "媒体暂时无法准备".into()))
                     }
@@ -287,17 +312,41 @@ mod native {
         }
         PREPARATION.store(id, Ordering::Release);
         let result = async {
+            if args.mode == MediaMode::Audio {
+                let id_text =
+                    CString::new(args.video_id.as_str()).map_err(|_| "曲目标识无效".to_owned())?;
+                let parked = on_main(app.clone(), move || {
+                    check_preparation(id)?;
+                    Ok(unsafe { nasti_native_prepare_parked_audio(id_text.as_ptr()) })
+                })
+                .await?;
+                if parked {
+                    return wait_until_ready(app.clone(), id).await;
+                }
+            }
             let source =
                 catalog_commands::resolve_playback(&app, &args.video_id, args.mode.as_str())
                     .await?;
             let url = CString::new(source.url()).map_err(|_| "授权曲目地址无效".to_owned())?;
+            let audio_url = source
+                .companion_url()
+                .map(CString::new)
+                .transpose()
+                .map_err(|_| "视频音轨地址无效".to_owned())?;
             let video_id = CString::new(args.video_id).map_err(|_| "曲目标识无效".to_owned())?;
+            let title = media_label(args.title);
+            let artist = media_label(args.artist);
             on_main(app.clone(), move || {
                 check_preparation(id)?;
                 unsafe {
                     nasti_native_prepare(
                         url.as_ptr(),
+                        audio_url
+                            .as_ref()
+                            .map_or(std::ptr::null(), |url| url.as_ptr()),
                         video_id.as_ptr(),
+                        title.as_ptr(),
+                        artist.as_ptr(),
                         args.mode == MediaMode::Video,
                         NativePlaybackSource::transfer(source),
                     )

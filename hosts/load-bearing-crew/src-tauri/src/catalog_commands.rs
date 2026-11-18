@@ -1,21 +1,25 @@
 use crate::models::{
-    ArchiveSearchResult, LyricLine, MediaMode, PlaylistColumn, PlaylistImportPreview,
-    PlaylistRemoval, SearchResults, StorageStats, TrackItem, VaultItem,
+    LyricLine, MediaMode, PlaylistColumn, SearchResults, StorageStats, TrackItem, VaultItem,
+    YoutubePlaylistSummary, YoutubePrivacy,
 };
 use crate::runtime_storage::RuntimeStorage;
-use convallis_pipe::{ArchiveMedia, MediaPipe, MediaSource, PlaybackSource, Vault};
-use serde::{Deserialize, Serialize};
+use convallis_pipe::{
+    youtube_id, youtube_id_from_vault_key, youtube_vault_key, ArchiveMedia, MediaPipe, MediaSource,
+    PlaybackSource, Vault, YoutubeSearchHit, YoutubeSearchResults,
+};
+use serde::Deserialize;
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
-use uraniborg_core::{ArchiveAlbum, ArchiveCatalog, ArchiveRecording, Catalog, Library};
+use uraniborg_core::{
+    music_track, playlist_column, playlist_id, ArchiveRecording, Catalog, Library,
+};
 
 pub struct MediaServices {
     catalog: Arc<Catalog>,
-    archive: ArchiveCatalog,
-    previews: Mutex<std::collections::VecDeque<(String, Arc<ArchiveAlbum>)>>,
+    recent_search: Mutex<std::collections::VecDeque<TrackItem>>,
     pub(crate) library: Library,
     vault: Arc<Vault>,
     pipe: MediaPipe,
@@ -24,8 +28,47 @@ pub struct MediaServices {
 
 impl MediaServices {
     fn mark_track(&self, track: &mut TrackItem) {
-        track.is_vault_downloaded = self.vault.path(&track.video_id, "audio").is_some();
-        track.is_vault_video_downloaded = self.vault.path(&track.video_id, "video").is_some();
+        let key = self.youtube_key(&track.video_id);
+        let key = key.as_deref().unwrap_or(&track.video_id);
+        track.is_vault_downloaded = self.vault.path(key, "audio").is_some();
+        track.is_vault_video_downloaded = self.vault.path(key, "video").is_some();
+    }
+
+    fn youtube_key(&self, id: &str) -> Option<String> {
+        if self.catalog.track(id).is_ok() {
+            return None;
+        }
+        youtube_vault_key(id)
+    }
+
+    async fn youtube_track(&self, id: &str, channel: Option<&str>) -> Result<TrackItem, String> {
+        if let Some(track) = self
+            .library
+            .saved_youtube_track(id)
+            .await
+            .map_err(error_string)?
+        {
+            return Ok(track);
+        }
+        if let Some(track) = self
+            .recent_search
+            .lock()
+            .await
+            .iter()
+            .find(|track| track.video_id == id)
+            .cloned()
+        {
+            return Ok(track);
+        }
+        let track = self
+            .library
+            .youtube_columns(channel)
+            .await
+            .map_err(error_string)?
+            .into_iter()
+            .flat_map(|column| column.tracks)
+            .find(|track| track.video_id == id);
+        Ok(track.unwrap_or_else(|| music_track(id, id.into(), String::new(), false)))
     }
 
     fn mark_playlist(&self, playlist: &mut PlaylistColumn) {
@@ -66,7 +109,6 @@ pub(crate) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
     };
     let runtime = RuntimeStorage::open(&runtime_base, &app.config().identifier)?;
     let catalog = Arc::new(Catalog::load(&root)?);
-    let archive = ArchiveCatalog::new()?;
     let vault = Arc::new(Vault::open_with_staging(
         data.join("vault"),
         runtime.vault_dir.clone(),
@@ -93,29 +135,35 @@ pub(crate) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
         let pipe = MediaPipe::start(sources, Arc::clone(&vault)).await?;
         Ok::<_, Box<dyn std::error::Error>>((library, pipe))
     })?;
-    let youtube = if isolated_data.is_none() {
-        crate::youtube_oauth::remove_legacy_keychain_grants()
-    } else {
-        Ok(())
-    }
-    .and_then(|()| {
-        crate::youtube_commands::YoutubeServices::new(
-            &data.join("youtube-oauth-client.json"),
-            &runtime.oauth_dir,
-        )
-    });
+    let youtube = crate::youtube_commands::YoutubeServices::new(
+        isolated_data.is_none(),
+        &data.join("youtube-oauth-client.json"),
+    );
     app.manage(crate::youtube_commands::YoutubeService(youtube));
     app.manage(runtime);
     app.manage(MediaServices {
         catalog,
-        archive,
-        previews: Mutex::default(),
+        recent_search: Mutex::default(),
         library,
         vault,
         pipe,
         _data_lock: data_lock,
     });
-    crate::youtube_commands::start_session_checks(app.handle().clone());
+    let handle = app.handle().clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60 * 30)).await;
+            let media = handle.state::<MediaServices>();
+            if media
+                .library
+                .expire_youtube_snapshots()
+                .await
+                .unwrap_or(false)
+            {
+                let _ = handle.emit("youtube-snapshots-expired", ());
+            }
+        }
+    });
     Ok(())
 }
 
@@ -140,38 +188,19 @@ pub(crate) async fn resolve_playback(
             }
         }
     }
+    if state.youtube_key(id).is_some() {
+        return state
+            .pipe
+            .youtube_playback(id, mode)
+            .await
+            .map_err(error_string);
+    }
     Err("曲库中没有这个媒体版本".into())
 }
 
 fn archive_media(record: &ArchiveRecording) -> Result<ArchiveMedia, String> {
     ArchiveMedia::new(&record.item_id, &record.filename, record.size, &record.sha1)
         .map_err(error_string)
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImportArgs {
-    url_or_id: String,
-    target_column: Option<usize>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ApplyImportArgs {
-    source_id: String,
-    source_index: Option<usize>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoveEntriesArgs {
-    playlist_id: String,
-    entry_ids: Vec<String>,
-}
-
-#[derive(Deserialize)]
-pub struct RestoreEntriesArgs {
-    removal: PlaylistRemoval,
 }
 
 #[derive(Deserialize)]
@@ -201,31 +230,6 @@ pub struct SearchArgs {
 }
 
 #[derive(Deserialize)]
-pub struct ArchiveSearchArgs {
-    query: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AddEntryArgs {
-    playlist_id: String,
-    video_id: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PlaylistEntry {
-    entry_id: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoveEntryArgs {
-    playlist_id: String,
-    entry_id: String,
-}
-
-#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrackArgs {
     video_id: String,
@@ -247,8 +251,18 @@ pub struct StorageLimitArgs {
 #[tauri::command]
 pub(crate) async fn catalog_fetch_columns(
     state: State<'_, MediaServices>,
+    youtube: State<'_, crate::youtube_commands::YoutubeService>,
 ) -> Result<Vec<PlaylistColumn>, String> {
-    let mut columns = state.library.columns().await.map_err(error_string)?;
+    let account = youtube
+        .0
+        .as_ref()
+        .ok()
+        .and_then(|service| service.status().channel_id);
+    let mut columns = state
+        .library
+        .youtube_columns(account.as_deref())
+        .await
+        .map_err(error_string)?;
     for playlist in &mut columns {
         state.mark_playlist(playlist);
     }
@@ -256,104 +270,37 @@ pub(crate) async fn catalog_fetch_columns(
 }
 
 #[tauri::command]
-pub(crate) async fn catalog_import_playlist_url(
-    args: ImportArgs,
-    state: State<'_, MediaServices>,
-) -> Result<PlaylistColumn, String> {
-    let mut playlist = if let Some(item) =
-        ArchiveCatalog::item_reference(&args.url_or_id).map_err(error_string)?
-    {
-        match state
-            .library
-            .stored_archive_album(&item, args.target_column)
-            .await
-            .map_err(error_string)?
-        {
-            Some(playlist) => playlist,
-            None => {
-                let album = state.archive.album(&item).await.map_err(error_string)?;
-                state
-                    .library
-                    .import_archive(&album, args.target_column)
-                    .await
-                    .map_err(error_string)?
-            }
-        }
-    } else {
-        state
-            .library
-            .import(&args.url_or_id, args.target_column)
-            .await
-            .map_err(error_string)?
-    };
-    state.mark_playlist(&mut playlist);
-    Ok(playlist)
-}
-
-#[tauri::command]
-pub(crate) async fn catalog_preview_playlist(
-    args: ImportArgs,
-    state: State<'_, MediaServices>,
-) -> Result<PlaylistImportPreview, String> {
-    let Some(item) = ArchiveCatalog::item_reference(&args.url_or_id).map_err(error_string)? else {
-        return state
-            .library
-            .preview_builtin(&args.url_or_id)
-            .await
-            .map_err(error_string);
-    };
-    let album = Arc::new(state.archive.album(&item).await.map_err(error_string)?);
-    let result = state
-        .library
-        .preview_archive(&album)
-        .await
-        .map_err(error_string)?;
-    let mut previews = state.previews.lock().await;
-    previews.retain(|(id, _)| id != &result.source_id);
-    previews.push_front((result.source_id.clone(), album));
-    previews.truncate(4);
-    Ok(result)
-}
-
-#[tauri::command]
-pub(crate) async fn catalog_apply_playlist_import(
-    args: ApplyImportArgs,
-    state: State<'_, MediaServices>,
-) -> Result<PlaylistImportPreview, String> {
-    if !args.source_id.starts_with("archive:") {
-        return state
-            .library
-            .apply_builtin(&args.source_id, args.source_index)
-            .await
-            .map_err(error_string);
-    }
-    let album = state
-        .previews
-        .lock()
-        .await
-        .iter()
-        .find(|(id, _)| id == &args.source_id)
-        .map(|(_, album)| Arc::clone(album))
-        .ok_or_else(|| "导入预览已过期，请重新查找歌单".to_owned())?;
-    state
-        .library
-        .apply_archive(&album, args.source_index)
-        .await
-        .map_err(error_string)
-}
-
-#[tauri::command]
 pub(crate) async fn catalog_search(
     args: SearchArgs,
     state: State<'_, MediaServices>,
+    youtube: State<'_, crate::youtube_commands::YoutubeService>,
 ) -> Result<SearchResults, String> {
-    let mut results = state
-        .library
-        .search(&args.query, args.filter.as_str())
-        .await
-        .map_err(error_string)?;
+    let query = args.query.trim();
+    let filter = args.filter.as_str();
+    if query.is_empty() {
+        return Ok(SearchResults {
+            songs: vec![],
+            videos: vec![],
+            playlists: vec![],
+        });
+    }
+    let mut results = match state.pipe.youtube_search(query, filter).await {
+        Ok(results) => public_search_results(results),
+        Err(error) => match &youtube.0 {
+            Ok(service) if service.status().connected => service.search(query, filter).await?,
+            _ => return Err(error_string(error)),
+        },
+    };
     for track in results.songs.iter_mut().chain(&mut results.videos) {
         state.mark_track(track);
+    }
+    {
+        let mut recent = state.recent_search.lock().await;
+        for track in results.songs.iter().chain(&results.videos) {
+            recent.retain(|prior| prior.video_id != track.video_id);
+            recent.push_front(track.clone());
+        }
+        recent.truncate(256);
     }
     for playlist in &mut results.playlists {
         state.mark_playlist(playlist);
@@ -361,71 +308,57 @@ pub(crate) async fn catalog_search(
     Ok(results)
 }
 
-#[tauri::command]
-pub(crate) async fn catalog_search_archive(
-    args: ArchiveSearchArgs,
-    state: State<'_, MediaServices>,
-) -> Result<Vec<ArchiveSearchResult>, String> {
-    state
-        .archive
-        .search(&args.query)
-        .await
-        .map_err(error_string)
-}
-
-#[tauri::command]
-pub(crate) async fn playlist_add_track(
-    args: AddEntryArgs,
-    state: State<'_, MediaServices>,
-) -> Result<PlaylistEntry, String> {
-    let entry_id = state
-        .library
-        .add_track(&args.playlist_id, &args.video_id)
-        .await
-        .map_err(error_string)?;
-    Ok(PlaylistEntry { entry_id })
-}
-
-#[tauri::command]
-pub(crate) async fn playlist_remove_track(
-    args: RemoveEntryArgs,
-    state: State<'_, MediaServices>,
-) -> Result<bool, String> {
-    state
-        .library
-        .remove_track(&args.playlist_id, &args.entry_id)
-        .await
-        .map_err(error_string)
-}
-
-#[tauri::command]
-pub(crate) async fn playlist_remove_entries(
-    args: RemoveEntriesArgs,
-    state: State<'_, MediaServices>,
-) -> Result<PlaylistRemoval, String> {
-    state
-        .library
-        .remove_entries(args.playlist_id, &args.entry_ids)
-        .await
-        .map_err(error_string)
-}
-
-#[tauri::command]
-pub(crate) async fn playlist_restore_entries(
-    args: RestoreEntriesArgs,
-    state: State<'_, MediaServices>,
-) -> Result<(), String> {
-    state
-        .library
-        .restore_entries(args.removal)
-        .await
-        .map_err(error_string)
+fn public_search_results(results: YoutubeSearchResults) -> SearchResults {
+    let track = |hit: YoutubeSearchHit, video| {
+        let title = hit.title.filter(|title| !title.is_empty())?;
+        if !youtube_id(&hit.id) {
+            return None;
+        }
+        let mut track = music_track(&hit.id, title, hit.channel.unwrap_or_default(), video);
+        track.duration_sec = hit.duration.unwrap_or(0.0).max(0.0).round() as u32;
+        Some(track)
+    };
+    let mut ids = std::collections::HashSet::new();
+    SearchResults {
+        songs: results
+            .songs
+            .into_iter()
+            .filter_map(|hit| track(hit, false))
+            .collect(),
+        videos: results
+            .videos
+            .into_iter()
+            .filter_map(|hit| track(hit, true))
+            .collect(),
+        playlists: results
+            .playlists
+            .into_iter()
+            .filter_map(|hit| {
+                let id = playlist_id(hit.url.as_deref()?).ok()?;
+                let title = hit.title.filter(|title| !title.is_empty())?;
+                if !ids.insert(id.clone()) {
+                    return None;
+                }
+                Some(playlist_column(
+                    YoutubePlaylistSummary {
+                        id,
+                        title,
+                        description: hit.channel.unwrap_or_default(),
+                        privacy: YoutubePrivacy::Public,
+                        can_edit: false,
+                    },
+                    0,
+                ))
+            })
+            .collect(),
+    }
 }
 
 #[tauri::command]
 pub(crate) async fn vault_download_track(
     args: DownloadArgs,
     state: State<'_, MediaServices>,
+    youtube: State<'_, crate::youtube_commands::YoutubeService>,
 ) -> Result<TrackItem, String> {
     if let Some(record) = state
         .library
@@ -443,6 +376,31 @@ pub(crate) async fn vault_download_track(
             .await
             .map_err(error_string)?;
         let mut track = record.track;
+        state.mark_track(&mut track);
+        return Ok(track);
+    }
+    if state.youtube_key(&args.video_id).is_some() {
+        let channel = youtube
+            .0
+            .as_ref()
+            .ok()
+            .and_then(|service| service.status().channel_id);
+        let mut track = state
+            .youtube_track(&args.video_id, channel.as_deref())
+            .await?;
+        state
+            .pipe
+            .save_youtube(args.video_id, args.download_mv)
+            .await
+            .map_err(error_string)?;
+        if args.download_mv {
+            track.mv_video_id = Some(track.video_id.clone());
+        }
+        state
+            .library
+            .save_youtube_track(&track)
+            .await
+            .map_err(error_string)?;
         state.mark_track(&mut track);
         return Ok(track);
     }
@@ -475,16 +433,20 @@ pub(crate) async fn vault_remove_track(
     args: TrackArgs,
     state: State<'_, MediaServices>,
 ) -> Result<bool, String> {
-    state
-        .library
-        .track(&args.video_id)
+    let youtube_key = state.youtube_key(&args.video_id);
+    let removed = state
+        .pipe
+        .remove_saved(youtube_key.clone().unwrap_or_else(|| args.video_id.clone()))
         .await
         .map_err(error_string)?;
-    state
-        .pipe
-        .remove_saved(args.video_id)
-        .await
-        .map_err(error_string)
+    if youtube_key.is_some() {
+        state
+            .library
+            .forget_youtube_track(&args.video_id)
+            .await
+            .map_err(error_string)?;
+    }
+    Ok(removed)
 }
 
 #[tauri::command]
@@ -515,7 +477,11 @@ pub(crate) async fn vault_list_tracks(
         .map_err(error_string)?;
     let mut rows = Vec::with_capacity(items.len());
     for (id, bytes) in items {
-        let mut track = state.library.track(&id).await.map_err(error_string)?;
+        let mut track = if let Some(video_id) = youtube_id_from_vault_key(&id) {
+            state.youtube_track(&video_id, None).await?
+        } else {
+            state.library.track(&id).await.map_err(error_string)?
+        };
         state.mark_track(&mut track);
         rows.push(VaultItem { track, bytes });
     }

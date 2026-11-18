@@ -130,6 +130,8 @@ pub struct PlaybackSnapshot {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaybackLoadArgs {
+    pub title: Option<String>,
+    pub artist: Option<String>,
     pub video_id: String,
     pub mode: MediaMode,
     pub position_ms: Option<u64>,
@@ -139,6 +141,8 @@ pub struct PlaybackLoadArgs {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlaybackPrepareArgs {
+    pub title: Option<String>,
+    pub artist: Option<String>,
     pub switch_id: u64,
     pub video_id: String,
     pub mode: MediaMode,
@@ -314,7 +318,7 @@ pub enum YoutubePrivacy {
     Unlisted,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppUpdateStatus {
     pub current_version: String,
@@ -326,11 +330,12 @@ pub struct AppUpdateInstallArgs {
     pub version: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct YoutubeStatus {
     pub can_connect: bool,
     pub connected: bool,
+    pub channel_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -379,11 +384,14 @@ pub enum YoutubePolicyPage {
 )]
 pub enum YoutubeRequest {
     Status,
-    ConfigureClient {
-        client_json: String,
+    Configure {
+        json: String,
+    },
+    Sync,
+    Cached {
+        playlist_id: String,
     },
     Connect,
-    CancelConnect,
     OpenPolicy {
         page: YoutubePolicyPage,
     },
@@ -425,10 +433,6 @@ pub enum YoutubeRequest {
     },
     Delete {
         playlist_id: String,
-    },
-    Open {
-        playlist_id: String,
-        video_id: Option<String>,
     },
 }
 

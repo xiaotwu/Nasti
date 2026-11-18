@@ -10,4 +10,6 @@ mod youtube;
 pub use archive::{ArchiveAlbum, ArchiveCatalog, ArchiveError, ArchiveRecording};
 pub use catalog::{Catalog, CatalogError};
 pub use library::{Library, LibraryError};
-pub use youtube::{playlist_id, video_id, YoutubeAccess, YoutubeApi, YoutubeError};
+pub use youtube::{
+    music_track, playlist_column, playlist_id, video_id, YoutubeAccess, YoutubeApi, YoutubeError,
+};

@@ -110,13 +110,13 @@ export interface PlaybackOutputs {
 }
 
 export interface PlaybackController {
-  playback_load(args: { videoId: string; mode: MediaMode; positionMs?: number; autoplay?: boolean }): Promise<PlaybackSnapshot>;
+  playback_load(args: { videoId: string; mode: MediaMode; positionMs?: number; autoplay?: boolean; title?: string; artist?: string }): Promise<PlaybackSnapshot>;
   playback_get_state(): Promise<PlaybackSnapshot>;
   playback_set_playing(args: { playing: boolean }): Promise<PlaybackSnapshot>;
   playback_seek(args: { positionMs: number }): Promise<PlaybackSnapshot>;
   playback_set_volume(args: { volume: number }): Promise<PlaybackSnapshot>;
   playback_set_video_frame(args: { frame: PlaybackVideoFrame | null }): Promise<void>;
-  playback_prepare(args: { switchId: number; videoId: string; mode: MediaMode }): Promise<void>;
+  playback_prepare(args: { switchId: number; videoId: string; mode: MediaMode; title?: string; artist?: string }): Promise<void>;
   playback_commit(args: { switchId: number; alignTime: boolean; positionMs: number; autoplay?: boolean }): Promise<PreparedPlayback>;
   playback_cancel_preparation(args: { switchId: number }): Promise<void>;
 }
@@ -207,6 +207,7 @@ export type YoutubePrivacy = "private" | "public" | "unlisted";
 export interface YoutubeStatus {
   canConnect: boolean;
   connected: boolean;
+  channelId?: string | null;
 }
 
 export interface YoutubePlaylistSummary {
@@ -232,9 +233,10 @@ export interface YoutubePlaylist extends YoutubePlaylistSummary {
 
 export type YoutubeRequest =
   | { action: "status" }
-  | { action: "configureClient"; clientJson: string }
+  | { action: "configure"; json: string }
+  | { action: "sync" }
+  | { action: "cached"; playlistId: string }
   | { action: "connect" }
-  | { action: "cancelConnect" }
   | { action: "openPolicy"; page: "privacy" | "nastiTerms" | "youtubeTerms" | "googlePermissions" }
   | { action: "disconnect" }
   | { action: "mine" }
@@ -247,8 +249,7 @@ export type YoutubeRequest =
   | { action: "add"; playlistId: string; reference: string }
   | { action: "remove"; playlistId: string; entryId: string }
   | { action: "move"; playlistId: string; entryId: string; position: number }
-  | { action: "delete"; playlistId: string }
-  | { action: "open"; playlistId: string; videoId?: string };
+  | { action: "delete"; playlistId: string };
 
 export type YoutubeReply =
   | { kind: "status"; value: YoutubeStatus }

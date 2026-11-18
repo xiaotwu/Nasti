@@ -1,17 +1,15 @@
-use crate::runtime_storage::{same_volume, OAUTH_PENDING};
 use crate::ui_locale::Language;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use reqwest::{Client, StatusCode, Url};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::{ErrorKind, Read, Write};
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::watch;
 use uuid::Uuid;
 
 const CONSENT_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -22,19 +20,26 @@ const CALLBACK_LIMIT: usize = 8192;
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(180);
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(2);
 const CLIENT_FILE_LIMIT: u64 = 64 * 1024;
-const REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
-const CANCELLED: &str = "已取消 Google 登录";
 
 pub(crate) struct YoutubeOAuth {
     client: Client,
     api_origin: Url,
     config: Option<DesktopClient>,
+    use_system_keychain: bool,
     client_file: PathBuf,
-    staging_dir: PathBuf,
+    session_file: PathBuf,
+    channel: Option<String>,
+    legacy_checked: bool,
+    local_session_seen: bool,
     refresh_token: Option<String>,
-    pending_revocation: Option<String>,
     access: Option<AccessToken>,
-    pub(crate) verified: Option<SessionTime>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct LocalGrant {
+    client_id: String,
+    refresh_token: String,
+    channel_id: String,
 }
 
 #[derive(Deserialize)]
@@ -52,37 +57,7 @@ struct DesktopClientDownload {
 
 struct AccessToken {
     value: String,
-    received: SessionTime,
-    lifetime: Duration,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct SessionTime {
-    monotonic: Instant,
-    wall: SystemTime,
-}
-
-impl SessionTime {
-    pub(crate) fn now() -> Self {
-        Self {
-            monotonic: Instant::now(),
-            wall: SystemTime::now(),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn after_suspension(duration: Duration) -> Self {
-        Self {
-            monotonic: Instant::now(),
-            wall: SystemTime::now() - duration,
-        }
-    }
-
-    pub(crate) fn elapsed(self) -> Duration {
-        self.monotonic
-            .elapsed()
-            .max(self.wall.elapsed().unwrap_or_default())
-    }
+    expires_at: Instant,
 }
 
 #[derive(Deserialize)]
@@ -97,12 +72,10 @@ struct TokenReply {
 #[derive(Deserialize)]
 struct OAuthError {
     error: String,
-    #[serde(rename = "error_description")]
-    description: Option<String>,
 }
 
 impl YoutubeOAuth {
-    pub(crate) fn new(client_file: &Path, staging_dir: &Path) -> Result<Self, String> {
+    pub(crate) fn new(use_system_keychain: bool, client_file: &Path) -> Result<Self, String> {
         let config = DesktopClient::load(client_file)?;
         let client = Client::builder()
             .https_only(true)
@@ -111,16 +84,25 @@ impl YoutubeOAuth {
             .timeout(Duration::from_secs(20))
             .build()
             .map_err(|_| "无法初始化 Google 授权连接".to_owned())?;
+        let session_file = client_file.with_file_name("youtube-session.json");
+        let local_session_seen = session_file.exists();
+        let saved = read_local_grant(&session_file)?.filter(|grant| {
+            config
+                .as_ref()
+                .is_some_and(|config| config.id == grant.client_id)
+        });
         Ok(Self {
             client,
             api_origin: Url::parse(OAUTH_API_ORIGIN).expect("constant Google OAuth origin"),
             config,
+            use_system_keychain: use_system_keychain && cfg!(target_os = "macos"),
             client_file: client_file.to_owned(),
-            staging_dir: staging_dir.to_owned(),
-            refresh_token: None,
-            pending_revocation: None,
+            session_file,
+            local_session_seen,
+            legacy_checked: false,
+            channel: saved.as_ref().map(|grant| grant.channel_id.clone()),
+            refresh_token: saved.map(|grant| grant.refresh_token),
             access: None,
-            verified: None,
         })
     }
 
@@ -128,78 +110,58 @@ impl YoutubeOAuth {
         self.config.is_some()
     }
 
-    pub(crate) fn configure_client(&mut self, json: &str) -> Result<(), String> {
-        if self.configured() || self.has_session() {
-            return Err("Google 桌面 OAuth 客户端已配置".into());
+    pub(crate) fn has_session(&self) -> bool {
+        self.refresh_token.is_some()
+    }
+
+    pub(crate) fn may_restore_legacy(&self) -> bool {
+        self.configured()
+            && self.use_system_keychain
+            && !self.local_session_seen
+            && !self.legacy_checked
+            && !self.has_session()
+    }
+
+    pub(crate) fn channel(&self) -> Option<&str> {
+        self.channel.as_deref()
+    }
+
+    pub(crate) fn configure(&mut self, json: &str) -> Result<(), String> {
+        if self.has_session() || self.configured() {
+            return Err("Google OAuth 客户端已配置".into());
         }
-        let client = DesktopClient::parse_download(json.as_bytes())?;
-        let directory = self
-            .client_file
-            .parent()
-            .ok_or("无法保存 Google 桌面 OAuth 客户端 JSON")?;
-        if !same_volume(directory, &self.staging_dir).unwrap_or(false) {
-            return Err("无法保存 Google 桌面 OAuth 客户端 JSON".into());
-        }
-        let settings = serde_json::to_vec(&serde_json::json!({
-            "installed": {"client_id": &client.id, "client_secret": &client.secret}
-        }))
-        .map_err(|_| "无法保存 Google 桌面 OAuth 客户端 JSON".to_owned())?;
-        if settings.len() as u64 > CLIENT_FILE_LIMIT {
-            return Err("Google 桌面 OAuth 客户端 JSON 文件过大".into());
-        }
-        // Publish the complete private file only if the destination still does not exist.
-        let mut pending = tempfile::Builder::new()
-            .prefix(OAUTH_PENDING)
-            .rand_bytes(0)
-            .tempfile_in(&self.staging_dir)
-            .map_err(|_| "无法保存 Google 桌面 OAuth 客户端 JSON".to_owned())?;
-        pending
-            .write_all(&settings)
-            .and_then(|_| pending.as_file().sync_all())
-            .map_err(|_| "无法保存 Google 桌面 OAuth 客户端 JSON".to_owned())?;
-        pending
-            .persist_noclobber(&self.client_file)
-            .map_err(|error| {
-                if error.error.kind() == ErrorKind::AlreadyExists {
-                    "Google 桌面 OAuth 客户端 JSON 文件已存在"
-                } else {
-                    "无法保存 Google 桌面 OAuth 客户端 JSON"
-                }
-                .to_owned()
-            })?;
+        let client = DesktopClient::parse(json.as_bytes())?;
+        write_private(&self.client_file, json.as_bytes())?;
         self.config = Some(client);
+        self.legacy_checked = false;
         Ok(())
     }
 
-    pub(crate) fn has_session(&self) -> bool {
-        self.refresh_token.is_some()
+    pub(crate) async fn remember_channel(&mut self, channel: String) -> Result<(), String> {
+        let config = self.config.as_ref().ok_or("缺少 Google OAuth 客户端")?;
+        let refresh = self.refresh_token.as_ref().ok_or("缺少 Google 持久授权")?;
+        self.save_grant(&config.id, refresh, &channel).await?;
+        self.local_session_seen = true;
+        self.channel = Some(channel);
+        Ok(())
     }
 
     pub(crate) fn invalidate_access_token(&mut self) {
         self.access = None;
     }
 
-    pub(crate) async fn connect(
-        &mut self,
-        cancellation: &mut watch::Receiver<u64>,
-    ) -> Result<(), String> {
-        self.connect_with(open_external, cancellation).await
+    pub(crate) async fn connect(&mut self) -> Result<(), String> {
+        self.connect_with(open_external).await
     }
 
     async fn connect_with(
         &mut self,
         open: impl FnOnce(&Url) -> Result<(), String>,
-        cancellation: &mut watch::Receiver<u64>,
     ) -> Result<(), String> {
-        if cancellation.has_changed().unwrap_or(true) {
-            return Err(CANCELLED.into());
-        }
-        if self.pending_revocation.is_some() {
-            return Err(
-                "正在重试撤销上一次 Google 授权。也可以在 Google 账号设置中移除访问权限".into(),
-            );
-        }
-        let config = self.config.as_ref().ok_or("此版本尚未启用 Google 登录")?;
+        let config = self
+            .config
+            .as_ref()
+            .ok_or("尚未配置 Google 桌面 OAuth 客户端")?;
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .map_err(|_| "无法打开本机授权回调".to_owned())?;
@@ -211,13 +173,7 @@ impl YoutubeOAuth {
         let state = Uuid::new_v4().simple().to_string();
         let browser_url = consent_url(&config.id, &redirect, &state, &verifier);
         open(&browser_url)?;
-        // Cancellation drops the loopback listener. Once Google returns a code, finish the
-        // exchange so a late cancellation cannot hide a newly granted session.
-        let code = tokio::select! {
-            biased;
-            _ = cancellation.changed() => return Err(CANCELLED.into()),
-            code = receive_code(listener, &redirect, &state, Language::current()) => code?,
-        };
+        let code = receive_code(listener, &redirect, &state, Language::current()).await?;
         let reply = self
             .request_tokens(
                 config,
@@ -234,18 +190,20 @@ impl YoutubeOAuth {
         let refresh = reply
             .refresh_token
             .filter(|value| !value.is_empty())
-            .ok_or("Google 未返回用于会话校验的授权，请重新同意歌单权限")?;
+            .ok_or("Google 未返回持久授权，请重新同意歌单权限")?;
         self.refresh_token = Some(refresh);
-        self.verified = Some(access.received);
+        self.channel = None;
+        self.legacy_checked = true;
         self.access = Some(access);
         Ok(())
     }
 
     pub(crate) async fn access_token(&mut self) -> Result<Option<String>, String> {
+        self.restore_grant().await?;
         if let Some(access) = self
             .access
             .as_ref()
-            .filter(|token| token.received.elapsed() < token.lifetime)
+            .filter(|token| token.expires_at > Instant::now())
         {
             return Ok(Some(access.value.clone()));
         }
@@ -261,32 +219,28 @@ impl YoutubeOAuth {
             .await?;
         let Some(reply) = reply else {
             self.access = None;
-            self.refresh_token = None;
-            self.verified = None;
+
             return Ok(None);
         };
         let access = AccessToken::from_reply(&reply)?;
         let value = access.value.clone();
-        self.verified = Some(access.received);
         self.access = Some(access);
         if let Some(rotated) = reply.refresh_token.filter(|value| !value.is_empty()) {
+            if let Some(channel) = self.channel.as_deref() {
+                self.save_grant(&config.id, &rotated, channel).await?;
+            }
             self.refresh_token = Some(rotated);
         }
         Ok(Some(value))
     }
 
     pub(crate) async fn disconnect(&mut self) -> Result<(), String> {
-        self.access = None;
-        self.verified = None;
-        if let Some(refresh) = self.refresh_token.take() {
-            self.pending_revocation = Some(refresh);
-        }
-        self.retry_revoke().await
-    }
-
-    pub(crate) async fn retry_revoke(&mut self) -> Result<(), String> {
-        let Some(refresh) = self.pending_revocation.as_deref() else {
+        self.restore_grant().await?;
+        let Some(config) = self.config.as_ref() else {
             return Ok(());
+        };
+        let Some(refresh) = self.refresh_token.as_deref() else {
+            return self.delete_refresh_token(&config.id).await;
         };
         let response = self
             .client
@@ -298,16 +252,65 @@ impl YoutubeOAuth {
             .form(&[("token", refresh)])
             .send()
             .await
-            .map_err(|_| "本地数据已清除。暂时无法联系 Google，Nasti 运行期间会重试。也可以在 Google 账号设置中移除访问权限".to_owned())?;
+            .map_err(|_| "暂时无法联系 Google 撤销授权，请重试".to_owned())?;
         let status = response.status();
         let already_revoked = status == StatusCode::BAD_REQUEST
             && response.json::<OAuthError>().await.is_ok_and(|reply| {
                 matches!(reply.error.as_str(), "invalid_token" | "invalid_grant")
             });
         if !status.is_success() && !already_revoked {
-            return Err("本地数据已清除。Google 尚未确认撤销，Nasti 运行期间会重试。也可以在 Google 账号设置中移除访问权限".into());
+            return Err("Google 未能确认授权已撤销，请重试".into());
         }
-        self.pending_revocation = None;
+        // Keep a tombstone so that an inaccessible or old keychain entry cannot be restored.
+        write_private(&self.session_file, b"null")?;
+        self.local_session_seen = true;
+        self.access = None;
+        self.refresh_token = None;
+        self.channel = None;
+        self.legacy_checked = true;
+        self.delete_refresh_token(&config.id)
+            .await
+            .map_err(|_| "Google 授权已撤销。无法移除钥匙串条目，请重试移除".to_owned())
+    }
+
+    async fn restore_grant(&mut self) -> Result<(), String> {
+        if self.refresh_token.is_some() || self.local_session_seen || self.legacy_checked {
+            return Ok(());
+        }
+        if let Some(config) = self.config.as_ref().filter(|_| self.use_system_keychain) {
+            let id = config.id.clone();
+            if let Ok(Ok(token)) = tokio::task::spawn_blocking(move || keychain::load(&id)).await {
+                self.refresh_token = token;
+                self.legacy_checked = true;
+            }
+        }
+        Ok(())
+    }
+
+    async fn save_grant(&self, client_id: &str, token: &str, channel: &str) -> Result<(), String> {
+        let data = serde_json::to_vec(&LocalGrant {
+            client_id: client_id.into(),
+            refresh_token: token.into(),
+            channel_id: channel.into(),
+        })
+        .map_err(|_| "无法编码 Google 会话".to_owned())?;
+        write_private(&self.session_file, &data)?;
+        if self.use_system_keychain {
+            let id = client_id.to_owned();
+            let token = token.to_owned();
+            // Local persistence already succeeded. A locked or re-signed keychain is recoverable.
+            let _ = tokio::task::spawn_blocking(move || keychain::save(&id, &token)).await;
+        }
+        Ok(())
+    }
+
+    async fn delete_refresh_token(&self, client_id: &str) -> Result<(), String> {
+        if self.use_system_keychain {
+            let id = client_id.to_owned();
+            tokio::task::spawn_blocking(move || keychain::delete(&id))
+                .await
+                .map_err(|_| "无法移除 Google 授权".to_owned())??;
+        }
         Ok(())
     }
 
@@ -338,14 +341,6 @@ impl YoutubeOAuth {
         }
         let error = response.json::<OAuthError>().await.ok();
         match error.as_ref().map(|failure| failure.error.as_str()) {
-            Some("invalid_request")
-                if error
-                    .as_ref()
-                    .and_then(|failure| failure.description.as_deref())
-                    .is_some_and(|description| description.contains("client_secret")) =>
-            {
-                Err("此版本缺少 Google 应用客户端凭据，请联系发布者".into())
-            }
             Some("invalid_grant") if status == StatusCode::BAD_REQUEST => Ok(None),
             Some("invalid_client" | "unauthorized_client") => {
                 Err("请检查 Google 桌面 OAuth 客户端配置".into())
@@ -353,6 +348,44 @@ impl YoutubeOAuth {
             _ => Err(format!("Google 授权请求失败（HTTP {}）", status.as_u16())),
         }
     }
+}
+
+fn read_local_grant(path: &Path) -> Result<Option<LocalGrant>, String> {
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("无法读取本地 Google 会话".into()),
+    };
+    let metadata = file.metadata().map_err(|_| "无法读取会话权限")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err("本地 Google 会话文件权限必须为 0600".into());
+        }
+    }
+    if !metadata.is_file() || metadata.len() > CLIENT_FILE_LIMIT {
+        return Err("本地 Google 会话文件无效".into());
+    }
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut file)
+        .take(CLIENT_FILE_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "无法读取本地 Google 会话")?;
+    let grant: Option<LocalGrant> =
+        serde_json::from_slice(&bytes).map_err(|_| "本地 Google 会话文件无效")?;
+    Ok(grant.filter(|grant| !grant.refresh_token.is_empty() && !grant.channel_id.is_empty()))
+}
+
+fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = path.parent().ok_or("无法定位应用数据目录")?;
+    let mut file =
+        tempfile::NamedTempFile::new_in(parent).map_err(|_| "无法创建受保护的 Google 配置")?;
+    file.write_all(bytes)
+        .and_then(|()| file.as_file().sync_all())
+        .map_err(|_| "无法保存 Google 配置")?;
+    file.persist(path).map_err(|_| "无法更新 Google 配置")?;
+    Ok(())
 }
 
 impl DesktopClient {
@@ -365,40 +398,13 @@ impl DesktopClient {
         }
         match std::env::var_os("NASTI_YOUTUBE_CLIENT_FILE").filter(|path| !path.is_empty()) {
             Some(path) => Self::read_file(Path::new(&path), true),
-            None => match Self::read_file(default_path, false)? {
-                // Keep the OAuth client an upgraded user already configured.
-                Some(client) => Ok(Some(client)),
-                None => Self::app_identity(
-                    option_env!("NASTI_APP_YOUTUBE_CLIENT_ID"),
-                    option_env!("NASTI_APP_YOUTUBE_CLIENT_SECRET"),
-                ),
-            },
+            None => Ok(Self::read_file(default_path, false)?.or_else(|| {
+                let id = option_env!("NASTI_APP_YOUTUBE_CLIENT_ID")?.trim();
+                let secret = option_env!("NASTI_APP_YOUTUBE_CLIENT_SECRET")?.trim();
+                if id.is_empty() || secret.is_empty() { return None; }
+                Some(Self { id: id.to_owned(), secret: Some(secret.to_owned()) })
+            })),
         }
-    }
-
-    fn app_identity(id: Option<&str>, secret: Option<&str>) -> Result<Option<Self>, String> {
-        let Some(id) = id.map(str::trim).filter(|id| !id.is_empty()) else {
-            return Ok(None);
-        };
-        let valid = id
-            .strip_suffix(".apps.googleusercontent.com")
-            .is_some_and(|prefix| {
-                !prefix.is_empty()
-                    && prefix
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-            });
-        if !valid {
-            return Err("此版本的 Google 登录配置无效，请联系发布者".into());
-        }
-        let secret = secret
-            .map(str::trim)
-            .filter(|secret| !secret.is_empty())
-            .ok_or("此版本缺少 Google 应用客户端凭据，请联系发布者")?;
-        Ok(Some(Self {
-            id: id.to_owned(),
-            secret: Some(secret.to_owned()),
-        }))
     }
 
     fn read_file(path: &Path, required: bool) -> Result<Option<Self>, String> {
@@ -417,10 +423,13 @@ impl DesktopClient {
         std::fs::File::open(path)
             .and_then(|file| file.take(CLIENT_FILE_LIMIT + 1).read_to_end(&mut bytes))
             .map_err(|_| "无法读取 Google 桌面 OAuth 客户端 JSON".to_owned())?;
-        Self::parse_download(&bytes).map(Some)
+        if bytes.len() as u64 > CLIENT_FILE_LIMIT {
+            return Err("Google 桌面 OAuth 客户端 JSON 文件无效".into());
+        }
+        Self::parse(&bytes).map(Some)
     }
 
-    fn parse_download(bytes: &[u8]) -> Result<Self, String> {
+    fn parse(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() as u64 > CLIENT_FILE_LIMIT {
             return Err("Google 桌面 OAuth 客户端 JSON 文件无效".into());
         }
@@ -455,12 +464,10 @@ impl AccessToken {
         {
             return Err("Google 尚未授予歌单权限，请重新连接".into());
         }
-        let lifetime =
-            Duration::from_secs(reply.expires_in.saturating_sub(30)).min(REFRESH_INTERVAL);
+        let lifetime = Duration::from_secs(reply.expires_in.saturating_sub(30).min(86_400));
         Ok(Self {
             value: reply.access_token.clone(),
-            received: SessionTime::now(),
-            lifetime,
+            expires_at: Instant::now() + lifetime,
         })
     }
 }
@@ -583,7 +590,7 @@ pub(crate) fn open_external(url: &Url) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn launch_browser(url: &Url) -> Result<(), String> {
+fn launch_browser(url: &Url) -> Result<(), String> {
     use std::process::{Command, Stdio};
     let result = Command::new("/usr/bin/open")
         .arg(url.as_str())
@@ -597,7 +604,7 @@ pub(crate) fn launch_browser(url: &Url) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn launch_browser(url: &Url) -> Result<(), String> {
+fn launch_browser(url: &Url) -> Result<(), String> {
     use std::ptr::null;
     use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
     let operation = [b'o' as u16, b'p' as u16, b'e' as u16, b'n' as u16, 0];
@@ -618,55 +625,71 @@ pub(crate) fn launch_browser(url: &Url) -> Result<(), String> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(crate) fn launch_browser(_: &Url) -> Result<(), String> {
+fn launch_browser(_: &Url) -> Result<(), String> {
     Err("此宿主尚未接入系统浏览器".into())
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn remove_legacy_keychain_grants() -> Result<(), String> {
-    remove_keychain_service("dev.nasti.terminal.youtube-oauth")
-}
+mod keychain {
+    use security_framework::passwords::{
+        delete_generic_password, get_generic_password, set_generic_password,
+    };
 
-#[cfg(target_os = "macos")]
-fn remove_keychain_service(service: &str) -> Result<(), String> {
-    use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
+    const SERVICE: &str = "dev.nasti.terminal.youtube-oauth";
+    const ITEM_NOT_FOUND: i32 = -25300;
 
-    match ItemSearchOptions::new()
-        .class(ItemClass::generic_password())
-        .service(service)
-        .limit(Limit::All) // The legacy file-based Keychain defaults to one result.
-        .delete()
-    {
-        Ok(()) => Ok(()),
-        Err(error) if error.code() == -25300 => Ok(()), // errSecItemNotFound
-        Err(_) => Err("无法移除旧版 Nasti Google 授权钥匙串条目，请解锁钥匙串后重启 Nasti".into()),
+    pub(super) fn load(client: &str) -> Result<Option<String>, String> {
+        match get_generic_password(SERVICE, client) {
+            Ok(value) => String::from_utf8(value)
+                .map(Some)
+                .map_err(|_| "钥匙串中的 Google 授权记录无效".into()),
+            Err(error) if error.code() == ITEM_NOT_FOUND => Ok(None),
+            Err(_) => Err("无法读取钥匙串中的 Google 授权".into()),
+        }
+    }
+
+    pub(super) fn save(client: &str, refresh: &str) -> Result<(), String> {
+        set_generic_password(SERVICE, client, refresh.as_bytes())
+            .map_err(|_| "无法将 Google 授权保存在钥匙串".into())
+    }
+
+    pub(super) fn delete(client: &str) -> Result<(), String> {
+        match delete_generic_password(SERVICE, client) {
+            Ok(()) => Ok(()),
+            Err(error) if error.code() == ITEM_NOT_FOUND => Ok(()),
+            Err(_) => Err("无法移除钥匙串中的 Google 授权".into()),
+        }
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn remove_legacy_keychain_grants() -> Result<(), String> {
-    Ok(())
+mod keychain {
+    pub(super) fn load(_: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+    pub(super) fn save(_: &str, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+    pub(super) fn delete(_: &str) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
     use std::collections::HashMap;
     use tokio::task::JoinHandle;
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(5);
-    pub(crate) const FIRST_GRANT: &str = r#"{"token_type":"Bearer","access_token":"first-access","refresh_token":"first-refresh","expires_in":3600}"#;
+    const FIRST_GRANT: &str = r#"{"token_type":"Bearer","access_token":"first-access","refresh_token":"first-refresh","expires_in":3600}"#;
 
-    pub(crate) struct MockRequest {
-        pub(crate) path: String,
-        pub(crate) form: HashMap<String, String>,
+    struct MockRequest {
+        path: String,
+        form: HashMap<String, String>,
     }
 
-    pub(crate) fn mock_origin(oauth: &YoutubeOAuth) -> Url {
-        oauth.api_origin.clone()
-    }
-
-    pub(crate) async fn mock_google(
+    async fn mock_google(
         replies: Vec<(&'static str, &'static str)>,
     ) -> (YoutubeOAuth, JoinHandle<Vec<MockRequest>>) {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
@@ -685,11 +708,7 @@ pub(crate) mod tests {
             }
             requests
         });
-        (mock_oauth(api_origin), server)
-    }
-
-    pub(crate) fn mock_oauth(api_origin: Url) -> YoutubeOAuth {
-        YoutubeOAuth {
+        let oauth = YoutubeOAuth {
             client: Client::builder()
                 .no_proxy()
                 .timeout(TEST_TIMEOUT)
@@ -700,13 +719,16 @@ pub(crate) mod tests {
                 id: "desktop-client".into(),
                 secret: Some("desktop-secret".into()),
             }),
+            use_system_keychain: false,
             client_file: PathBuf::new(),
-            staging_dir: PathBuf::new(),
+            session_file: PathBuf::new(),
+            local_session_seen: false,
+            legacy_checked: false,
+            channel: None,
             refresh_token: None,
-            pending_revocation: None,
             access: None,
-            verified: None,
-        }
+        };
+        (oauth, server)
     }
 
     async fn read_mock_request(stream: &mut TcpStream) -> MockRequest {
@@ -744,187 +766,51 @@ pub(crate) mod tests {
         MockRequest { path, form }
     }
 
-    pub(crate) async fn connect_in_mock_browser(
+    async fn connect_in_mock_browser(
         oauth: &mut YoutubeOAuth,
         response: (&'static str, &'static str),
     ) -> (Result<(), String>, HashMap<String, String>) {
         let mut browser = None;
-        let (_cancel, mut cancellation) = watch::channel(0);
         let result = tokio::time::timeout(
             TEST_TIMEOUT,
-            oauth.connect_with(
-                |consent| {
-                    assert_eq!(consent.host_str(), Some("accounts.google.com"));
-                    assert_eq!(consent.path(), "/o/oauth2/v2/auth");
-                    let params: HashMap<_, _> = consent.query_pairs().into_owned().collect();
-                    assert_eq!(params["client_id"], "desktop-client");
-                    assert_eq!(params["scope"], PLAYLIST_SCOPE);
-                    assert_eq!(params["access_type"], "offline");
-                    assert_eq!(params["code_challenge_method"], "S256");
-                    assert!(!params.contains_key("client_secret"));
-                    let mut callback = Url::parse(&params["redirect_uri"]).unwrap();
-                    assert_eq!(callback.host_str(), Some("127.0.0.1"));
-                    callback
-                        .query_pairs_mut()
-                        .append_pair("state", &params["state"])
-                        .append_pair(response.0, response.1);
-                    let task = tokio::spawn(async move {
-                        let reply = Client::builder()
-                            .no_proxy()
-                            .timeout(TEST_TIMEOUT)
-                            .build()
-                            .unwrap()
-                            .get(callback)
-                            .send()
-                            .await
-                            .unwrap();
-                        assert_eq!(reply.status(), StatusCode::OK);
-                        assert_eq!(reply.headers()["Cache-Control"], "no-store");
-                        assert!(!reply.text().await.unwrap().contains(response.1));
-                    });
-                    browser = Some((params, task));
-                    Ok(())
-                },
-                &mut cancellation,
-            ),
+            oauth.connect_with(|consent| {
+                assert_eq!(consent.host_str(), Some("accounts.google.com"));
+                assert_eq!(consent.path(), "/o/oauth2/v2/auth");
+                let params: HashMap<_, _> = consent.query_pairs().into_owned().collect();
+                assert_eq!(params["client_id"], "desktop-client");
+                assert_eq!(params["scope"], PLAYLIST_SCOPE);
+                assert_eq!(params["access_type"], "offline");
+                assert_eq!(params["code_challenge_method"], "S256");
+                assert!(!params.contains_key("client_secret"));
+                let mut callback = Url::parse(&params["redirect_uri"]).unwrap();
+                assert_eq!(callback.host_str(), Some("127.0.0.1"));
+                callback
+                    .query_pairs_mut()
+                    .append_pair("state", &params["state"])
+                    .append_pair(response.0, response.1);
+                let task = tokio::spawn(async move {
+                    let reply = Client::builder()
+                        .no_proxy()
+                        .timeout(TEST_TIMEOUT)
+                        .build()
+                        .unwrap()
+                        .get(callback)
+                        .send()
+                        .await
+                        .unwrap();
+                    assert_eq!(reply.status(), StatusCode::OK);
+                    assert_eq!(reply.headers()["Cache-Control"], "no-store");
+                    assert!(!reply.text().await.unwrap().contains(response.1));
+                });
+                browser = Some((params, task));
+                Ok(())
+            }),
         )
         .await
         .unwrap();
         let (params, task) = browser.unwrap();
         task.await.unwrap();
         (result, params)
-    }
-
-    #[test]
-    fn publisher_identity_requires_both_application_credentials() {
-        assert!(DesktopClient::app_identity(None, None).unwrap().is_none());
-        assert!(DesktopClient::app_identity(Some("  "), None)
-            .unwrap()
-            .is_none());
-        assert!(DesktopClient::app_identity(Some("not-a-google-client"), Some("fixture")).is_err());
-        assert!(DesktopClient::app_identity(
-            Some("https://example.apps.googleusercontent.com"),
-            Some("fixture")
-        )
-        .is_err());
-        assert!(
-            DesktopClient::app_identity(Some("12345-nasti.apps.googleusercontent.com"), None)
-                .is_err()
-        );
-        let client = DesktopClient::app_identity(
-            Some(" 12345-nasti.apps.googleusercontent.com "),
-            Some(" fixture-application-secret "),
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(client.id, "12345-nasti.apps.googleusercontent.com");
-        assert_eq!(client.secret.as_deref(), Some("fixture-application-secret"));
-    }
-
-    #[tokio::test]
-    async fn cancel_closes_the_loopback_and_allows_a_new_attempt() {
-        let (mut oauth, google) = mock_google(vec![("200 OK", FIRST_GRANT)]).await;
-        let (cancel, mut cancellation) = watch::channel(0);
-        let mut callback = None;
-        let error = oauth
-            .connect_with(
-                |consent| {
-                    callback = consent
-                        .query_pairs()
-                        .find(|(name, _)| name == "redirect_uri")
-                        .map(|(_, uri)| Url::parse(&uri).unwrap());
-                    cancel.send_replace(1);
-                    Ok(())
-                },
-                &mut cancellation,
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(error, CANCELLED);
-        let callback = callback.unwrap();
-        assert!(
-            TcpStream::connect((Ipv4Addr::LOCALHOST, callback.port().unwrap()))
-                .await
-                .is_err()
-        );
-        assert!(!oauth.has_session());
-        assert!(oauth.access_token().await.unwrap().is_none());
-
-        // A cancellation queued before browser launch must not open a stale login.
-        cancel.send_replace(2);
-        assert_eq!(
-            oauth
-                .connect_with(
-                    |_| panic!("canceled login opened a browser"),
-                    &mut cancellation
-                )
-                .await
-                .unwrap_err(),
-            CANCELLED
-        );
-
-        // A subsequent attempt receives a fresh subscription and a fresh PKCE challenge.
-        let (result, _) = connect_in_mock_browser(&mut oauth, ("code", "retry-code")).await;
-        result.unwrap();
-        assert!(oauth.has_session());
-        let requests = google.await.unwrap();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].form["code"], "retry-code");
-    }
-
-    #[tokio::test]
-    async fn legacy_secretless_configuration_omits_secret_and_keeps_pkce() {
-        let (mut oauth, google) = mock_google(vec![("200 OK", FIRST_GRANT)]).await;
-        oauth.config.as_mut().unwrap().secret = None;
-        let (result, _) = connect_in_mock_browser(&mut oauth, ("code", "public-client-code")).await;
-        result.unwrap();
-        let requests = google.await.unwrap();
-        assert!(!requests[0].form.contains_key("client_secret"));
-        assert!(requests[0].form.contains_key("code_verifier"));
-    }
-
-    #[tokio::test]
-    async fn missing_app_credentials_do_not_save_a_grant() {
-        let (mut oauth, google) = mock_google(vec![(
-            "400 Bad Request",
-            r#"{"error":"invalid_request","error_description":"client_secret is missing."}"#,
-        )])
-        .await;
-        let (result, _) = connect_in_mock_browser(&mut oauth, ("code", "test-code")).await;
-        assert_eq!(
-            result.unwrap_err(),
-            "此版本缺少 Google 应用客户端凭据，请联系发布者"
-        );
-        assert!(!oauth.has_session());
-        assert!(oauth.access_token().await.unwrap().is_none());
-        assert_eq!(google.await.unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn browser_launch_failure_leaves_no_listener_or_grant() {
-        let (mut oauth, google) = mock_google(Vec::new()).await;
-        let (_cancel, mut cancellation) = watch::channel(0);
-        let mut port = None;
-        let result = oauth
-            .connect_with(
-                |consent| {
-                    let redirect = consent
-                        .query_pairs()
-                        .find(|(name, _)| name == "redirect_uri")
-                        .unwrap()
-                        .1;
-                    port = Url::parse(&redirect).unwrap().port();
-                    Err("无法打开系统浏览器".into())
-                },
-                &mut cancellation,
-            )
-            .await;
-        assert_eq!(result.unwrap_err(), "无法打开系统浏览器");
-        assert!(TcpStream::connect((Ipv4Addr::LOCALHOST, port.unwrap()))
-            .await
-            .is_err());
-        assert!(!oauth.has_session());
-        assert!(google.await.unwrap().is_empty());
     }
 
     #[test]
@@ -945,50 +831,6 @@ pub(crate) mod tests {
         let absent = directory.path().join("absent.json");
         assert!(DesktopClient::read_file(&absent, false).unwrap().is_none());
         assert!(DesktopClient::read_file(&absent, true).is_err());
-    }
-
-    #[tokio::test]
-    async fn configures_an_empty_install_with_private_persistence_and_no_overwrite() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("youtube-oauth-client.json");
-        let (mut oauth, server) = mock_google(Vec::new()).await;
-        oauth.config = None;
-        oauth.client_file = path.clone();
-        oauth.staging_dir = directory.path().join("staging");
-        std::fs::create_dir(&oauth.staging_dir).unwrap();
-        assert!(oauth.access_token().await.unwrap().is_none());
-
-        let web_client = r#"{"web":{"client_id":"synthetic-web-client"}}"#;
-        assert!(oauth.configure_client(web_client).is_err());
-        assert!(oauth
-            .configure_client(&"x".repeat(CLIENT_FILE_LIMIT as usize + 1))
-            .is_err());
-        assert!(!path.exists());
-        assert!(!oauth.configured());
-
-        let desktop_client = r#"{"installed":{"client_id":" fixture.apps.googleusercontent.com ","client_secret":" synthetic "}}"#;
-        // A file created after launch may belong to the user. A first-time import must preserve it.
-        std::fs::write(&path, "existing").unwrap();
-        assert!(oauth.configure_client(desktop_client).is_err());
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "existing");
-        assert!(!oauth.configured());
-        std::fs::remove_file(&path).unwrap();
-
-        oauth.configure_client(desktop_client).unwrap();
-        assert!(oauth.configured());
-        assert!(!oauth.has_session());
-        assert!(oauth.configure_client(desktop_client).is_err());
-        let reloaded = DesktopClient::read_file(&path, true).unwrap().unwrap();
-        assert_eq!(reloaded.id, "fixture.apps.googleusercontent.com");
-        assert_eq!(reloaded.secret.as_deref(), Some("synthetic"));
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o600);
-        }
-        assert_eq!(std::fs::read_dir(&oauth.staging_dir).unwrap().count(), 0);
-        assert!(server.await.unwrap().is_empty());
     }
 
     #[test]
@@ -1053,6 +895,8 @@ pub(crate) mod tests {
             ("503 Service Unavailable", "{}"),
             ("200 OK", "{}"),
         ]).await;
+        let directory = tempfile::tempdir().unwrap();
+        oauth.session_file = directory.path().join("youtube-session.json");
         let (result, consent) =
             connect_in_mock_browser(&mut oauth, ("code", "granted/code+")).await;
         result.unwrap();
@@ -1062,17 +906,52 @@ pub(crate) mod tests {
             Some("first-access")
         );
 
+        oauth.remember_channel("channel-a".into()).await.unwrap();
+        assert_eq!(
+            read_local_grant(&oauth.session_file)
+                .unwrap()
+                .unwrap()
+                .channel_id,
+            "channel-a"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&oauth.session_file)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        let client_path = directory.path().join("youtube-oauth-client.json");
+        write_private(
+            &client_path,
+            br#"{"installed":{"client_id":"desktop-client","client_secret":"desktop-secret"}}"#,
+        )
+        .unwrap();
+        let restarted = YoutubeOAuth::new(false, &client_path).unwrap();
+        assert!(restarted.has_session());
+        assert_eq!(restarted.channel(), Some("channel-a"));
+        assert!(restarted.access.is_none());
         oauth.invalidate_access_token();
         assert_eq!(
             oauth.access_token().await.unwrap().as_deref(),
             Some("next-access")
         );
+        assert_eq!(
+            read_local_grant(&oauth.session_file)
+                .unwrap()
+                .unwrap()
+                .refresh_token,
+            "next-refresh"
+        );
         assert!(oauth.disconnect().await.is_err());
-        assert!(!oauth.has_session());
-        assert!(oauth.access_token().await.unwrap().is_none());
-        assert!(oauth.pending_revocation.is_some());
-        oauth.retry_revoke().await.unwrap();
-        assert!(oauth.pending_revocation.is_none());
+        assert!(oauth.has_session());
+        oauth.disconnect().await.unwrap();
+        assert!(read_local_grant(&oauth.session_file).unwrap().is_none());
         assert!(!oauth.has_session());
         assert!(oauth.access_token().await.unwrap().is_none());
 
@@ -1103,10 +982,15 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn oauth_denial_and_invalid_refresh_leave_no_account_session() {
+    async fn oauth_denial_and_failed_refresh_do_not_destroy_a_persisted_grant() {
         let (mut oauth, google) = mock_google(vec![
             ("200 OK", FIRST_GRANT),
+            ("503 Service Unavailable", "{}"),
             ("400 Bad Request", r#"{"error":"invalid_grant"}"#),
+            (
+                "200 OK",
+                r#"{"token_type":"Bearer","access_token":"recovered-access","expires_in":3600}"#,
+            ),
         ])
         .await;
         let (result, _) = connect_in_mock_browser(&mut oauth, ("error", "access_denied")).await;
@@ -1114,10 +998,25 @@ pub(crate) mod tests {
         assert!(oauth.access_token().await.unwrap().is_none());
         let (result, _) = connect_in_mock_browser(&mut oauth, ("code", "consent-code")).await;
         result.unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        oauth.session_file = directory.path().join("youtube-session.json");
+        oauth.remember_channel("channel-a".into()).await.unwrap();
         oauth.invalidate_access_token();
+        assert!(oauth.access_token().await.is_err());
         assert!(oauth.access_token().await.unwrap().is_none());
-        assert!(!oauth.has_session());
-        assert!(oauth.access_token().await.unwrap().is_none());
+        assert!(oauth.has_session());
+        assert_eq!(oauth.channel(), Some("channel-a"));
+        assert_eq!(
+            read_local_grant(&oauth.session_file)
+                .unwrap()
+                .unwrap()
+                .refresh_token,
+            "first-refresh"
+        );
+        assert_eq!(
+            oauth.access_token().await.unwrap().as_deref(),
+            Some("recovered-access")
+        );
         let requests = tokio::time::timeout(TEST_TIMEOUT, google)
             .await
             .unwrap()

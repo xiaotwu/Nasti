@@ -1,4 +1,5 @@
-import type { NastiIpcContract, PlaybackOutput, PlaybackOutputs } from "../../../contracts/ipc-commands";
+import type { TerminalIpc } from "./playback";
+import type { PlaybackOutput, PlaybackOutputs } from "../../../contracts/ipc-commands";
 import { icon, type IconName } from "./icons";
 import { localizeError, t } from "./i18n";
 import { element, setText } from "./layout";
@@ -18,7 +19,7 @@ export class OutputPicker {
   private refreshTimer = 0;
   private changing = false;
 
-  constructor(private readonly ipc: NastiIpcContract, signal: AbortSignal) {
+  constructor(private readonly ipc: TerminalIpc, signal: AbortSignal) {
     this.devices.addEventListener("click", event => {
       const choice = event.target instanceof Element && event.target.closest<HTMLButtonElement>("[data-output]");
       if (choice) void this.select(choice.dataset.output || null);

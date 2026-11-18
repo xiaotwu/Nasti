@@ -49,6 +49,8 @@ const strokes = {
   power: '<path d="M12 3.8v8.1M7.1 6.4a7.6 7.6 0 1 0 9.8 0"/>',
   link: '<path d="M10 6h8v8m0-8-9 9m4 3H6V9"/>',
   account: '<circle cx="12" cy="8.5" r="3.2"/><path d="M5.2 19a6.8 6.8 0 0 1 13.6 0"/><circle cx="12" cy="12" r="9"/>',
+  warning: '<path d="M10.6 4.6 3 18a1.3 1.3 0 0 0 1.1 2h15.8a1.3 1.3 0 0 0 1.1-2L13.4 4.6a1.6 1.6 0 0 0-2.8 0Z"/><path d="M12 9v4m0 3v.1"/>',
+  error: '<circle cx="12" cy="12" r="8"/><path d="m9 9 6 6m0-6-6 6"/>',
   info: '<circle cx="12" cy="12" r="8"/><path d="M12 11.4v4.8m0-8.4v.1"/>',
 } as const;
 

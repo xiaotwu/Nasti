@@ -18,6 +18,12 @@ const columns = archiveColumns([
     { videoId: "same", entryId: "first-entry" }, { videoId: "same", entryId: "repeat-entry" },
   ] },
 ]);
+const manyPlaylists = archiveColumns(Array.from({ length: 15 }, (_, columnIndex) => ({
+  columnIndex, playlistId: `playlist-${columnIndex}`, tracks: [{ videoId: `track-${columnIndex}` }],
+})).reverse());
+assert.equal(manyPlaylists.length, 15);
+assert.equal(trackAt(manyPlaylists, { lane: -1, row: 0 }).track.videoId, "track-14");
+assert.equal(locateTrack(manyPlaylists, { lane: 13, row: 0 }, 14, 0).lane, 14);
 assert.equal(trackAt(columns, { lane: 0, row: -1 }).entryId, "repeat-entry");
 assert.equal(trackAt(columns, { lane: -1, row: -1 }).entryId, "second-entry");
 assert.deepEqual(locateTrack(columns, { lane: -1, row: 5 }, 3, 1), { lane: 0, row: 5 });

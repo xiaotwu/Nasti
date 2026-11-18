@@ -38,10 +38,20 @@ export function mountLayout(root: HTMLElement): void {
     ["performance", t("性能", "Performance"), `
       ${settingSelect(t("三维画质", "3D quality"), "quality-setting", [["performance", t("性能", "Performance")], ["balanced", t("均衡", "Balanced")], ["high", t("高", "High")], ["ultra", t("极高", "Ultra")]])}
       <label class="setting-row"><strong>${t("节能模式", "Power saving")}</strong><input type="checkbox" id="power-setting"></label>`],
-    ["library", t("曲库", "Library"), `
-      <div class="setting-row"><strong>${t("导入歌单", "Import playlist")}</strong>${button("import", "import-playlist", t("打开导入抽屉", "Open playlist import"))}</div>
-      <div class="setting-row" data-youtube-entry hidden><strong>YouTube Music</strong>${button("music", "youtube-playlists", t("管理 YouTube Music 歌单", "Manage YouTube Music playlists"))}</div>
-      <div class="setting-row"><div><strong>Vault</strong><p id="settings-storage"></p></div>${button("storage", "vault-capacity", t("查看容量", "View storage"))}</div>`],
+    ["library", t("曲库 / Vault", "Library / Vault"), `
+      <div class="vault-body">
+              <div class="vault-meter">
+                <p id="vault-stats" role="status"></p>
+                <progress id="vault-progress" aria-label="${t("Vault 已使用容量", "Vault storage used")}" max="1" value="0"></progress>
+                <p id="vault-remaining"></p>
+                <form id="vault-limit-form" class="vault-limit">
+                  <label for="vault-limit">${t("容量上限（MiB）", "Storage limit (MiB)")}</label>
+                  <input id="vault-limit" type="number" min="0" max="2048" step="1" required>
+                  <button type="submit" class="icon-button" aria-label="${t("保存容量上限", "Save storage limit")}" title="${t("保存容量上限", "Save storage limit")}">${icon("check")}</button>
+                </form>
+              </div>
+              <div id="library-list" class="vault-list"></div>
+            </div>`],
     ["about", t("关于", "About"), `
       <div class="setting-row"><strong>Nasti</strong><span>${appVersion} · GPL-3.0-or-later</span></div>
       <div class="setting-row settings-update" id="settings-update" hidden>
@@ -72,16 +82,24 @@ export function mountLayout(root: HTMLElement): void {
           <img src="/foundry-art/desktop/header-lockup-transparent.webp" alt=""
             width="576" height="360" draggable="false">
         </span>
-        <nav class="glass capsule search-capsule" aria-label="${t("检索与浏览", "Search and browse")}">
-          ${button("back", "close-detail", t("返回档案阵列（Esc）", "Back to archive (Esc)"), "hidden")}
-          ${button("search", "search", t("检索曲库", "Search library"))}
-          ${button("radar", "radar", t("曲库总览", "Library overview"), 'aria-pressed="false"')}
-        </nav>
-        <nav class="glass capsule terminal-capsule" aria-label="${t("终端", "Terminal")}">
-          ${button("library", "library", t("离线储藏库", "Vault"))}
-          ${button("import", "import-playlist", t("导入歌单", "Import playlist"))}
-          ${button("settings", "settings", t("终端设置", "Settings"))}
-        </nav>
+        ${button("back", "close-detail", t("返回档案阵列（Esc）", "Back to archive (Esc)"), 'hidden')}
+        <div class="terminal-actions">
+          <nav class="glass capsule terminal-capsule" aria-label="${t("终端", "Terminal")}">
+            ${button("search", "search", t("搜索与导入", "Search and import"))}
+            ${button("radar", "radar", t("曲库总览", "Library overview"), 'aria-pressed="false"')}
+            ${button("settings", "settings", t("终端设置", "Settings"))}
+          </nav>
+          <button id="user-avatar-pill" class="glass icon-button" type="button" data-youtube-action="account"
+            aria-haspopup="true" aria-expanded="false" aria-controls="account-popover" aria-label="${t("Google 账号", "Google account")}">${icon("account")}</button>
+          <section id="account-popover" class="glass" aria-label="${t("Google 账号", "Google account")}" hidden>
+            <strong>YouTube Music</strong>
+            <span id="account-channel"></span>
+            <div class="youtube-toolbar">
+              <button type="button" class="text-button" data-youtube-action="sync">${t("立即同步", "Sync now")}</button>
+              <button type="button" class="text-button" data-youtube-action="disconnect">${t("断开连接", "Disconnect")}</button>
+            </div>
+          </section>
+        </div>
         <nav class="glass capsule detail-capsule" id="detail-tabs" aria-label="${t("详情视图", "Detail views")}" hidden>
           ${button("list", "tracklist", t("列表", "Track list"), 'aria-pressed="false" aria-controls="tracklist"')}
           ${button("lyrics", "lyrics", t("歌词", "Lyrics"), 'aria-pressed="true" aria-controls="lyrics"')}
@@ -91,13 +109,38 @@ export function mountLayout(root: HTMLElement): void {
 
       <section class="radar" id="radar" aria-label="${t("曲库总览", "Library overview")}" hidden>
         <aside class="overview-sidebar">
-          <h2>${t("歌单", "Playlists")}</h2>
+          <div class="overview-sidebar-header">
+            <h2>${t("歌单", "Playlists")}</h2>
+            ${youtubeButton("add", "create", t("新建 YouTube 歌单", "Create YouTube playlist"))}
+            ${youtubeButton("restart", "sync", t("刷新同步", "Sync playlists"))}
+          </div>
           <div id="radar-columns"></div>
         </aside>
         <div class="overview-content">
           <header class="overview-title"><h1 id="radar-title"></h1><div id="overview-actions"></div></header>
+          <p id="overview-description"></p>
+          <form id="youtube-add" class="import-form" hidden>
+            <label class="search-input">${icon("music")}<input id="youtube-song" autocomplete="off" placeholder="${t("歌曲链接或视频 ID", "Track link or video ID")}" aria-label="${t("歌曲链接或视频 ID", "Track link or video ID")}" required></label>
+            <button type="submit" class="text-button">${t("添加", "Add")}</button>
+          </form>
+          <form id="youtube-edit" aria-labelledby="youtube-edit-title" hidden>
+            <h3 id="youtube-edit-title"></h3>
+            <label>${t("名称", "Name")}<input id="youtube-name" autocomplete="off" maxlength="150" required></label>
+            <label>${t("简介", "Description")}<textarea id="youtube-note" maxlength="5000" rows="3"></textarea></label>
+            <label>${t("可见性", "Visibility")}<select id="youtube-privacy">${youtubePrivacyOptions}</select></label>
+            <div class="youtube-toolbar">
+              <button type="button" class="text-button" data-youtube-action="cancel-edit">${t("取消", "Cancel")}</button>
+              <button type="submit" class="text-button">${t("保存", "Save")}</button>
+            </div>
+          </form>
+          <div id="youtube-confirm" role="group" aria-labelledby="youtube-confirm-label" hidden>
+            <p id="youtube-confirm-label"></p>
+            <div class="youtube-toolbar">
+              <button type="button" class="text-button" data-youtube-action="cancel-confirm">${t("取消", "Cancel")}</button>
+              <button type="button" class="text-button" data-youtube-action="confirm">${t("确认", "Confirm")}</button>
+            </div>
+          </div>
           <div class="overview-tracks" id="overview-tracks"></div>
-          <div id="overview-batch" hidden></div>
         </div>
       </section>
 
@@ -165,10 +208,6 @@ export function mountLayout(root: HTMLElement): void {
             <div class="transport-more" id="transport-more" hidden>
               ${button("more", "transport-more", t("更多曲目操作", "More track actions"), 'aria-expanded="false" aria-controls="transport-menu"')}
               <div class="glass transport-menu" id="transport-menu" role="group" aria-label="${t("曲目操作", "Track actions")}" hidden>
-                <button class="transport-menu-item" type="button" data-action="add-inspected" aria-expanded="false" aria-controls="add-menu">
-                  ${t("加入歌单", "Add to Playlist")}${icon("chevron")}
-                </button>
-                <div id="add-menu" class="glass add-menu" hidden></div>
                 <button class="transport-menu-item" type="button" data-action="disassemble">
                   ${t("查看档案", "Inspect Cassette")}
                 </button>
@@ -208,8 +247,7 @@ export function mountLayout(root: HTMLElement): void {
         </nav>
       </footer>
 
-      <div id="feedback" class="feedback glass" role="status" aria-live="polite" hidden></div>
-      <div id="undo-notices" class="undo-notices"></div>
+      <div id="toast-stack" aria-label="${t("终端通知", "Terminal notifications")}"></div>
       <div id="loading-status" class="loading-status" role="status">${t("正在打开曲库", "Opening library")}</div>
 
       <dialog id="panel" class="dialog glass" aria-labelledby="panel-title">
@@ -219,14 +257,9 @@ export function mountLayout(root: HTMLElement): void {
         </header>
         <div class="dialog-content" id="panel-content">
           <section id="search-panel" hidden>
-            <div id="search-sources" class="search-filters search-sources" role="group" aria-label="${t("曲库来源", "Library source")}" hidden>
-              ${button("library", "search-local", t("本地曲库", "Local library"), 'aria-pressed="true"')}
-              ${button("globe", "search-archive", t("Internet Archive 授权曲库", "Licensed Internet Archive catalog"), 'aria-pressed="false"')}
-              <span id="search-source-label">${t("本地曲库", "Local library")}</span>
-            </div>
             <form id="search-form" class="import-form search-form">
-              <label class="search-input">${icon("search")}<input id="search-input" type="search" placeholder="${t("搜索歌名、艺人或歌单", "Search tracks, artists, or playlists")}" autocomplete="off" aria-label="${t("搜索曲库", "Search library")}"></label>
-              <button id="search-submit" type="submit" class="icon-button" aria-label="${t("检索在线曲库", "Search online catalog")}" title="${t("检索在线曲库", "Search online catalog")}" hidden>${icon("search")}</button>
+              <label class="search-input">${icon("search")}<input id="search-input" type="search" placeholder="${t("搜索曲目、艺人，或粘贴歌单链接", "Search tracks, artists, or paste a playlist link")}" autocomplete="off" aria-label="${t("搜索曲库", "Search library")}"></label>
+              <button id="search-submit" type="submit" class="icon-button" aria-label="${t("检索在线曲库", "Search online catalog")}" title="${t("检索在线曲库", "Search online catalog")}">${icon("search")}</button>
             </form>
             <div id="search-filters" class="search-filters" role="group" aria-label="${t("搜索类别", "Search filters")}">
               ${button("radar", "filter-all", t("所有结果", "All results"), 'aria-pressed="true"')}
@@ -235,127 +268,6 @@ export function mountLayout(root: HTMLElement): void {
               ${button("library", "filter-playlists", t("歌单", "Playlists"), 'aria-pressed="false"')}
             </div>
             <div id="search-results" class="search-results"></div>
-          </section>
-          <section id="library-panel" hidden>
-            <div class="vault-toolbar">
-              ${button("back", "vault-drawer", t("返回储藏库抽屉", "Back to Vault"), "hidden")}
-              ${button("storage", "vault-capacity", t("展开储藏库容量", "Show Vault storage"))}
-            </div>
-            <div class="vault-body">
-              <div class="vault-meter">
-                <p id="vault-stats" role="status"></p>
-                <progress id="vault-progress" aria-label="${t("Vault 已使用容量", "Vault storage used")}" max="1" value="0"></progress>
-                <p id="vault-remaining"></p>
-                <form id="vault-limit-form" class="vault-limit" hidden>
-                  <label for="vault-limit">${t("容量上限（MiB）", "Storage limit (MiB)")}</label>
-                  <input id="vault-limit" type="number" min="0" max="2048" step="1" required>
-                  <button type="submit" class="icon-button" aria-label="${t("保存容量上限", "Save storage limit")}" title="${t("保存容量上限", "Save storage limit")}">${icon("check")}</button>
-                </form>
-              </div>
-              <div id="library-list" class="vault-list"></div>
-            </div>
-          </section>
-          <section id="import-panel" hidden>
-            <form id="import-form" class="import-form">
-              <label class="search-input"><input id="import-input" autocomplete="off" placeholder="${t("歌单链接或编号", "Playlist link or ID")}" aria-label="${t("授权歌单链接或编号", "Licensed playlist link or ID")}" required></label>
-              <button type="submit" class="icon-button" aria-label="${t("查找歌单", "Find playlist")}" title="${t("查找歌单", "Find playlist")}">${icon("search")}</button>
-              ${button("music", "youtube-playlists", t("导入或管理 YouTube Music 歌单", "Import or manage YouTube Music playlists"), "data-youtube-entry hidden")}
-            </form>
-            <p id="import-status" role="status"></p>
-            <div id="import-preview" hidden>
-              <header>
-                <h3>${t("导入预览", "Import preview")}</h3><p id="import-summary"></p>
-              </header>
-              <div id="import-list"></div>
-              <footer>
-                ${button("importAll", "import-all", t("导入全部曲目", "Import all tracks"))}
-              </footer>
-            </div>
-          </section>
-          <section id="youtube-panel" hidden>
-            <p id="youtube-status" role="status" aria-live="polite"></p>
-            <button type="button" class="text-button" id="youtube-cancel-connect" hidden>${t("取消登录", "Cancel sign-in")}</button>
-            <fieldset id="youtube-controls">
-              <div id="youtube-navigation" class="youtube-toolbar">
-                ${button("back", "import-playlist", t("返回导入歌单", "Back to playlist import"))}
-                <button type="button" class="text-button" data-youtube-action="connect" aria-describedby="youtube-signin-help" hidden>${t("使用 Google 登录", "Sign in with Google")}</button>
-                ${youtubeButton("restart", "retry", t("重新读取账号和歌单", "Reload account and playlists"), "hidden")}
-                <div id="youtube-account-tools" class="youtube-disclosure" hidden>
-                  ${youtubeButton("account", "account-menu", t("Google 账号", "Google account"), 'aria-expanded="false" aria-controls="youtube-account-menu"')}
-                  <div id="youtube-account-menu" class="youtube-menu" hidden>
-                    <button type="button" data-youtube-action="disconnect">${t("撤销授权", "Revoke access")}</button>
-                  </div>
-                </div>
-              </div>
-              <div id="youtube-policy" class="youtube-policy">
-                <p id="youtube-policy-summary">${t("Nasti 通过 YouTube API 访问你授权的歌单。导入的歌单仅在当前应用会话中保留。", "Nasti uses YouTube API Services to access the playlists you authorize. Imported playlists are kept for the current app session.")}</p>
-                <nav aria-label="${t("YouTube Music 隐私与条款", "YouTube Music privacy and terms")}">
-                  <a href="https://xiaotwu.github.io/Nasti/privacy.html" data-youtube-policy-page="privacy">${t("隐私政策", "Privacy policy")}</a>
-                  <a href="https://xiaotwu.github.io/Nasti/terms.html" data-youtube-policy-page="nastiTerms">${t("Nasti 使用条款", "Nasti terms of use")}</a>
-                  <a href="https://www.youtube.com/t/terms" data-youtube-policy-page="youtubeTerms">${t("YouTube 服务条款", "YouTube Terms of Service")}</a>
-                  <a href="https://myaccount.google.com/permissions" data-youtube-policy-page="googlePermissions">${t("Google 账号权限", "Google account permissions")}</a>
-                </nav>
-                <button type="button" class="text-button" data-youtube-action="accept-policy" aria-describedby="youtube-policy-summary">${t("同意隐私政策及条款并继续", "Agree to privacy policy and terms")}</button>
-              </div>
-              <p id="youtube-signin-help" class="youtube-signin-help" tabindex="-1" hidden></p>
-              <form id="youtube-import" autocomplete="off" class="import-form">
-                <label class="search-input">${icon("link")}<input id="youtube-reference" autocomplete="off" placeholder="${t("歌单链接或编号", "Playlist link or ID")}" aria-label="${t("YouTube Music 歌单链接或编号", "YouTube Music playlist link or ID")}" required></label>
-                <button type="submit" class="icon-button" aria-label="${t("导入歌单", "Import playlist")}" title="${t("导入歌单", "Import playlist")}">${icon("import")}</button>
-              </form>
-              <section id="youtube-list-view" aria-label="${t("YouTube Music 歌单", "YouTube Music playlists")}">
-                <div class="youtube-toolbar youtube-list-tools" role="group" aria-label="${t("歌单来源", "Playlist source")}">
-                  <button type="button" class="text-button" data-youtube-action="imported" aria-pressed="true">${t("已导入", "Imported")}</button>
-                  <button type="button" class="text-button" data-youtube-action="mine" aria-pressed="false" hidden>${t("我的歌单", "My playlists")}</button>
-                  ${youtubeButton("add", "create", t("新建歌单", "Create playlist"), "hidden")}
-                </div>
-                <div id="youtube-lists"></div>
-              </section>
-              <section id="youtube-detail" aria-labelledby="youtube-title" hidden>
-                <div class="youtube-playlist-header">
-                  ${youtubeButton("back", "back", t("返回歌单列表", "Back to playlists"))}
-                  <div class="youtube-heading">
-                    <h3 id="youtube-title" tabindex="-1"></h3>
-                    <p id="youtube-snapshot"></p>
-                  </div>
-                  <div class="youtube-toolbar youtube-playlist-tools" role="group" aria-label="${t("歌单操作", "Playlist actions")}">
-                    ${youtubeButton("restart", "refresh", t("刷新歌单", "Refresh playlist"))}
-                    ${youtubeButton("add", "add-song", t("添加歌曲", "Add track"), 'aria-expanded="false" aria-controls="youtube-add" hidden')}
-                    ${youtubeButton("editList", "edit", t("编辑歌单", "Edit playlist"), "hidden")}
-                    <div class="youtube-disclosure">
-                      ${youtubeButton("more", "playlist-menu", t("更多歌单操作", "More playlist actions"), 'aria-expanded="false" aria-controls="youtube-playlist-menu"')}
-                      <div id="youtube-playlist-menu" class="youtube-menu" hidden>
-                        <button type="button" data-youtube-action="open">${icon("link")}${t("在 YouTube Music 打开", "Open in YouTube Music")}</button>
-                        <button type="button" data-youtube-action="forget" hidden>${icon("remove")}${t("移除本地记录", "Remove local snapshot")}</button>
-                        <button type="button" data-youtube-action="delete" hidden>${icon("close")}${t("删除在线歌单", "Delete online playlist")}</button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <p id="youtube-description"></p>
-                <form id="youtube-add" autocomplete="off" class="import-form" hidden>
-                  <label class="search-input">${icon("music")}<input id="youtube-song" autocomplete="off" placeholder="${t("歌曲链接或视频编号", "Track link or video ID")}" aria-label="${t("歌曲链接或视频编号", "Track link or video ID")}" required></label>
-                  <button type="submit" class="icon-button" aria-label="${t("确认添加歌曲", "Confirm adding track")}" title="${t("确认添加歌曲", "Confirm adding track")}">${icon("check")}</button>
-                </form>
-                <ol id="youtube-tracks" aria-label="${t("歌单曲序", "Playlist order")}"></ol>
-              </section>
-              <form id="youtube-edit" autocomplete="off" aria-labelledby="youtube-edit-title" hidden>
-                <h3 id="youtube-edit-title"></h3>
-                <label>${t("名称", "Name")}<input id="youtube-name" autocomplete="off" maxlength="150" required></label>
-                <label>${t("简介", "Description")}<textarea id="youtube-note" maxlength="5000" rows="3"></textarea></label>
-                <label>${t("可见性", "Visibility")}<select id="youtube-privacy">${youtubePrivacyOptions}</select></label>
-                <div class="youtube-toolbar">
-                  <button type="button" class="text-button" data-youtube-action="cancel-edit">${t("取消", "Cancel")}</button>
-                  <button type="submit" class="text-button">${t("保存", "Save")}</button>
-                </div>
-              </form>
-              <div id="youtube-confirm" aria-labelledby="youtube-confirm-label" role="group" hidden>
-                <p id="youtube-confirm-label"></p>
-                <div class="youtube-toolbar">
-                  <button type="button" class="text-button" data-youtube-action="cancel-confirm">${t("取消", "Cancel")}</button>
-                  <button type="button" class="text-button" data-youtube-action="confirm">${t("确认", "Confirm")}</button>
-                </div>
-              </div>
-            </fieldset>
           </section>
         </div>
         <section id="settings-panel" aria-labelledby="panel-title" hidden>
@@ -366,6 +278,28 @@ export function mountLayout(root: HTMLElement): void {
             ${settingsSections.map(([key, label, content]) => `<section id="settings-${key}"><h2>${label}</h2>${content}</section>`).join("")}
           </div>
         </section>
+      </dialog>
+
+      <dialog id="login-card" class="glass" aria-labelledby="login-title">
+        <div class="login-body">
+          ${youtubeButton("close", "close-login", t("关闭", "Close"))}
+          <svg class="login-mark" viewBox="0 0 112 72" fill="none" aria-hidden="true">
+            <path pathLength="1" d="M56 36c-9-14-17-22-29-22a22 22 0 1 0 0 44c12 0 20-8 29-22Z"/>
+            <path pathLength="1" d="M56 36c9-14 17-22 29-22a22 22 0 1 1 0 44c-12 0-20-8-29-22Z"/>
+          </svg>
+          <h2 id="login-title">${t("连接 Google 账号", "Connect your Google account")}</h2>
+          <p>${t("同步你的 YouTube Music 歌单，并将公开歌单订阅到 Nasti。", "Sync your YouTube Music playlists and subscribe to public playlists in Nasti.")}</p>
+          <button class="google-login" type="button" data-youtube-action="connect" disabled><span aria-hidden="true">G</span> ${t("使用 Google 继续", "Continue with Google")}</button>
+          <nav class="login-policy" aria-label="${t("授权说明", "Authorization information")}">
+            <button type="button" class="text-button" data-youtube-action="privacy">${t("隐私政策", "Privacy policy")}</button>
+            <button type="button" class="text-button" data-youtube-action="terms">${t("使用条款", "Terms of use")}</button>
+          </nav>
+          <div id="login-setup">
+            <label for="youtube-client-file">${t("选择桌面 OAuth 客户端 JSON", "Choose desktop OAuth client JSON")}</label>
+            <input id="youtube-client-file" type="file" accept=".json,application/json">
+            <a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener noreferrer">${t("在 Google Cloud 创建桌面客户端", "Create a desktop client in Google Cloud")}</a>
+          </div>
+        </div>
       </dialog>
 
       <section class="boot" id="boot" aria-label="${t("终端开机动画", "Startup animation")}" hidden>
@@ -405,6 +339,7 @@ export function durationLabel(ms: number): string {
 }
 
 export function safeAssetUrl(path: string | null | undefined): string {
+  if (path && /^https:\/\/i\.ytimg\.com\/vi\/[\w-]{11}\/hqdefault\.jpg$/.test(path)) return path;
   if (path && (path.startsWith("/authorized-media/") || path.startsWith("/foundry-art/"))) return path;
   return artUrl;
 }

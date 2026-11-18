@@ -1,657 +1,386 @@
 import type {
-  YoutubePlaylist, YoutubePlaylistItem, YoutubePlaylistSummary, YoutubePrivacy,
-  YoutubeReply, YoutubeRequest, YoutubeStatus,
+  PlaylistColumn, YoutubePlaylist, YoutubePrivacy, YoutubeReply, YoutubeRequest, YoutubeStatus,
 } from "../../../contracts/ipc-commands";
-import { icon, setIcon, type IconName } from "./icons";
-import { dateLocale, localizeError, t } from "./i18n";
+import { localizeError, t } from "./i18n";
 import { element, setText } from "./layout";
-import { empty, trackCountLabel } from "./views";
+import { actionButton, empty, trackCountLabel } from "./views";
+import type { IconName } from "./icons";
 
-type ListSource = "imported" | "mine";
-type EditMode = "create" | "update";
-type Disclosure = "account" | "playlist";
-type Announcement = "pending" | "success" | "error";
-type DataReply = Exclude<YoutubeReply, { kind: "done" }>;
-type ReplyValue<K extends DataReply["kind"]> = Extract<DataReply, { kind: K }>["value"];
-type Confirmation = { request: YoutubeRequest; caption: string; trigger: HTMLButtonElement };
-const policyKey = "nasti.youtube-policy.session";
+type ReplyValues = { [Reply in Exclude<YoutubeReply, { kind: "done" }> as Reply["kind"]]: Reply["value"] };
 
-function hasAcceptedPolicy(): boolean {
-  try { return localStorage.getItem(policyKey) === "accepted"; }
-  catch { return false; }
+export type ToastLevel = "info" | "success" | "warning" | "error";
+
+export function playlistReference(text: string): string | null {
+  const value = text.trim();
+  if (/^VLPL[\w-]{8,125}$/.test(value)) return value.slice(2);
+  if (/^(?:PL|OLAK5uy_|UU|LL|RD|FL|WL)[\w-]{8,127}$/.test(value)) return value;
+  try {
+    const url = new URL(/^[\w.]+\.com\//i.test(value) ? `https://${value}` : value);
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.port
+      || !["youtube.com", "www.youtube.com", "music.youtube.com", "m.youtube.com", "youtu.be"].includes(url.hostname)) return null;
+    const browse = url.hostname === "music.youtube.com" && /^\/browse\/VL([\w-]{2,128})$/.exec(url.pathname);
+    if (browse) return browse[1];
+    const ids = url.searchParams.getAll("list");
+    return ids.length === 1 && /^[\w-]{2,128}$/.test(ids[0]) ? ids[0] : null;
+  } catch {
+    return null;
+  }
 }
 
-const privacyLabels: Record<YoutubePrivacy, readonly [string, string]> = {
-  private: ["私密", "Private"], public: ["公开", "Public"], unlisted: ["不公开", "Unlisted"],
-};
-const privacyLabel = (privacy: YoutubePrivacy) => t(...privacyLabels[privacy]);
-const trackPosition = (index: number) => (index + 1).toLocaleString(dateLocale(), { useGrouping: false });
-
 export class YoutubePanel {
-  private readonly root = element("youtube-panel");
-  private readonly controls = element<HTMLFieldSetElement>("youtube-controls");
-  private readonly importForm = element<HTMLFormElement>("youtube-import");
-  private readonly input = element<HTMLInputElement>("youtube-reference");
-  private readonly connect = this.control("connect");
-  private readonly acceptPolicy = this.control("accept-policy");
-  private readonly cancelConnect = element<HTMLButtonElement>("youtube-cancel-connect");
-  private readonly retry = this.control("retry");
   private account: YoutubeStatus | null = null;
-  private source: ListSource = "imported";
-  private playlists: YoutubePlaylistSummary[] = [];
-  private selected: YoutubePlaylist | null = null;
-  private editing: EditMode | null = null;
-  private confirmation: Confirmation | null = null;
-  private menu: Disclosure | null = null;
-  private adding = false;
-  private nextFocus: HTMLElement | null = null;
-  private connecting = false;
-  private revoking = false;
-  private dataRevision = 0;
-  private readonly dataListener: Promise<void>;
-  private policyAccepted = hasAcceptedPolicy();
+  private column: PlaylistColumn | null = null;
+  private editing: "create" | "update" | null = null;
+  private pending: YoutubeRequest | null = null;
+  private busy = false;
+  private touchedAccount = false;
+  private loggedInSync = false;
+  private readonly login = element<HTMLDialogElement>("login-card");
+  private readonly avatar = element<HTMLButtonElement>("user-avatar-pill");
+  private readonly popover = element("account-popover");
 
   constructor(
-    private readonly invoke: (request: YoutubeRequest) => Promise<YoutubeReply>,
-    signal: AbortSignal,
-    onDataCleared?: (clear: () => void) => Promise<() => void>,
+    private readonly request: ((request: YoutubeRequest) => Promise<YoutubeReply>) | undefined,
+    private readonly changed: (playlistId?: string) => Promise<void>,
+    private readonly notify: (text: string, level: ToastLevel, openLogin?: boolean) => void,
+    private readonly signal: AbortSignal,
   ) {
-    this.dataListener = onDataCleared?.(() => {
-      if (this.revoking) return;
-      this.clearData();
-      this.account = null;
-      this.retry.hidden = false;
-      this.renderAccount();
-      this.announce(t("会话歌单记录已清除。重新读取以检查连接。", "Session playlist data cleared. Reload to check the connection."), "success");
-    }).then(unlisten => {
-      if (signal.aborted) unlisten();
-      else signal.addEventListener("abort", unlisten, { once: true });
-    }) ?? Promise.resolve();
-    // Observe the rejection even before the panel is first opened.
-    void this.dataListener.catch(() => {});
-
-    this.root.addEventListener("click", event => {
+    element("terminal").addEventListener("click", event => {
       if (!(event.target instanceof Element)) return;
-      const link = event.target.closest<HTMLAnchorElement>("a[data-youtube-policy-page]");
-      if (link) {
-        event.preventDefault();
-        const page = link.dataset.youtubePolicyPage;
-        if (page === "privacy" || page === "nastiTerms" || page === "youtubeTerms" || page === "googlePermissions") {
-          void this.complete({ action: "openPolicy", page }).catch(error => {
-            this.announce(localizeError(error, "无法打开文档", "Could not open the document"), "error");
-          });
-        }
-        return;
-      }
       const button = event.target.closest<HTMLButtonElement>("button[data-youtube-action]");
-      if (button && !button.disabled && !this.controls.disabled) this.handle(button);
-      else if (!event.target.closest(".youtube-disclosure")) this.setMenu(null);
+      if (button) {
+        void this.execute(() => this.click(button));
+      } else if (!this.popover.contains(event.target)) {
+        this.setPopover(false);
+      }
     }, { signal });
-    this.cancelConnect.addEventListener("click", () => this.cancelConnection(), { signal });
-    signal.addEventListener("abort", () => this.cancelConnection(), { once: true });
-    this.importForm.addEventListener("submit", event => {
+    element("youtube-client-file").addEventListener("change", event => {
+      const input = event.target as HTMLInputElement;
+      const file = input.files?.[0];
+      input.value = "";
+      if (!file || this.busy) return;
+      void this.perform(async () => {
+        if (file.size > 65_536) throw new Error(t("OAuth 客户端文件过大", "OAuth client file is too large"));
+        this.account = await this.send({ action: "configure", json: await file.text() }, "status");
+        this.renderAccount();
+        this.notify(t("已导入 OAuth 客户端", "OAuth client imported"), "success");
+      });
+    }, { signal });
+    element("youtube-edit").addEventListener("submit", event => {
       event.preventDefault();
-      void this.import(this.input.value);
+      const playlist = this.column;
+      const values = {
+        title: element<HTMLInputElement>("youtube-name").value.trim(),
+        description: element<HTMLTextAreaElement>("youtube-note").value,
+        privacy: element<HTMLSelectElement>("youtube-privacy").value as YoutubePrivacy,
+      };
+      if (this.editing === "create") void this.mutate({ action: "create", ...values });
+      else if (this.editing === "update" && playlist) void this.mutate({ action: "update", playlistId: playlist.playlistId, ...values });
     }, { signal });
     element("youtube-add").addEventListener("submit", event => {
       event.preventDefault();
       const input = element<HTMLInputElement>("youtube-song");
-      if (this.selected && input.value.trim()) {
-        void this.changePlaylist(
-          { action: "add", playlistId: this.selected.id, reference: input.value.trim() },
-          t("已添加歌曲", "Track added"),
-        ).then(changed => {
-          if (changed) {
-            input.value = "";
-            this.focus(input);
-          }
-        });
+      if (this.column && input.value.trim()) {
+        void this.mutate({ action: "add", playlistId: this.column.playlistId, reference: input.value.trim() });
       }
-    }, { signal });
-    element("youtube-edit").addEventListener("submit", event => {
-      event.preventDefault();
-      void this.saveEdit();
     }, { signal });
   }
 
-  async show(reference?: string): Promise<void> {
-    this.setMenu(null);
-    if (reference) {
-      this.input.value = reference;
-      this.selected = null;
-      this.editing = null;
-      this.confirmation = null;
-    }
-    if (this.controls.disabled) return;
-    this.renderView();
-    if (!this.policyAccepted) {
-      this.focus(this.acceptPolicy);
-      return;
-    }
-    await this.run(async () => {
-      await this.dataListener;
-      const status = await this.request({ action: "status" }, "status");
-      if (this.account?.connected && !status.connected) this.clearData();
-      this.account = status;
-      this.retry.hidden = true;
-      await this.loadList(this.account.connected ? this.source : "imported");
-    }, t("正在读取歌单", "Loading playlists…")).then(loaded => {
-      this.retry.hidden = loaded;
+  async start(bootComplete: Promise<void>, automatically = true): Promise<void> {
+    const status = this.request ? this.send({ action: "status" }, "status") : Promise.resolve({ canConnect: false, connected: false });
+    await this.execute(async () => {
+      const account = await status;
+      if (this.signal.aborted || this.touchedAccount) return;
+      this.account = account;
       this.renderAccount();
-      if (this.selected) this.focus(element("youtube-title"));
-      else if (!this.connect.hidden && this.connect.disabled) this.focus(element("youtube-signin-help"));
-      else this.focus(this.connect.hidden ? this.input : this.connect);
+      if (account.connected && automatically) {
+        // Render the persisted columns immediately while the service refreshes the account.
+        await this.changed();
+        void this.syncOwned();
+      }
+      await bootComplete;
+      if (!this.signal.aborted && automatically && !this.touchedAccount && !this.account?.connected) this.openLogin();
     });
   }
 
+  get connected(): boolean { return Boolean(this.account?.connected); }
+
+  requireAccount(): boolean {
+    if (this.connected) return true;
+    this.notify(t("请先登录 Google 账号以导入或管理歌单", "Sign in with Google to import or manage playlists"), "warning", true);
+    return false;
+  }
+
+  openLogin(): void {
+    this.touchedAccount = true;
+    this.setPopover(false);
+    if (!this.login.open) {
+      this.login.show();
+      this.login.querySelector<HTMLElement>("button:not(:disabled)")?.focus();
+    }
+  }
+
   dismiss(): boolean {
-    if (this.connecting) {
-      this.cancelConnection();
-      return true;
-    }
-    if (this.confirmation) {
-      const { trigger } = this.confirmation;
-      this.confirmation = null;
-      this.renderView();
-      this.focus(trigger);
-      return true;
-    }
-    if (this.editing) {
-      const action = this.editing === "create" ? "create" : "edit";
-      this.editing = null;
-      this.renderView();
-      this.focus(this.control(action));
-      return true;
-    }
-    if (this.menu) {
-      const trigger = this.control(this.menu + "-menu");
-      this.setMenu(null);
-      this.focus(trigger);
-      return true;
-    }
-    if (this.adding) {
-      this.adding = false;
-      this.renderView();
-      this.focus(this.control("add-song"));
+    if (this.login.open) { this.login.close(); this.avatar.focus(); return true; }
+    if (!this.popover.hidden) { this.setPopover(false); this.avatar.focus(); return true; }
+    if (!element("radar").hidden && (this.editing || this.pending || !element("youtube-add").hidden)) {
+      this.closeForms();
       return true;
     }
     return false;
   }
 
-  private clearData(): void {
-    this.dataRevision++;
-    this.selected = null;
-    this.editing = this.confirmation = null;
-    this.adding = false;
-    this.nextFocus = null;
-    this.source = "imported";
-    this.playlists = [];
-    this.input.value = "";
-    for (const id of ["youtube-song", "youtube-name", "youtube-note"]) {
-      element<HTMLInputElement | HTMLTextAreaElement>(id).value = "";
-    }
-    const title = element("youtube-title");
-    title.title = "";
-    setText(title, "");
-    setText(element("youtube-description"), "");
-    const snapshot = element("youtube-snapshot");
-    snapshot.title = "";
-    setText(snapshot, "");
-    element("youtube-tracks").replaceChildren();
-    this.setMenu(null);
-    this.renderList();
-    this.renderView();
-  }
-
-  private setMenu(menu: Disclosure | null): void {
-    if (menu === this.menu) return;
-    this.menu = menu;
-    for (const name of ["account", "playlist"] as const) {
-      const open = name === menu;
-      this.control(name + "-menu").setAttribute("aria-expanded", String(open));
-      element("youtube-" + name + "-menu").hidden = !open;
-    }
-  }
-
-  private control(action: string): HTMLButtonElement {
-    return this.root.querySelector<HTMLButtonElement>(`[data-youtube-action="${action}"]`)!;
-  }
-
-  private async request<K extends DataReply["kind"]>(
-    request: YoutubeRequest, kind: K,
-  ): Promise<ReplyValue<K>> {
-    const revision = this.dataRevision;
-    const reply = await this.invoke(request);
-    if (revision !== this.dataRevision) {
-      throw new Error(t("会话已更新，请重新读取歌单", "The session changed. Reload playlists."));
-    }
-    if (reply.kind !== kind || !("value" in reply)) throw new Error(t("YouTube Music 返回了意外的结果", "YouTube Music returned an unexpected response"));
-    return reply.value as ReplyValue<K>;
-  }
-
-  private async complete(request: YoutubeRequest): Promise<void> {
-    if ((await this.invoke(request)).kind !== "done") throw new Error(t("YouTube Music 返回了意外的结果", "YouTube Music returned an unexpected response"));
-  }
-
-  private async run(
-    work: () => Promise<void>, pending: string, success = "",
-    failure: readonly [string, string] = ["YouTube Music 操作失败", "The YouTube Music operation failed"],
-  ): Promise<boolean> {
-    if (this.controls.disabled) return false;
-    const revision = this.dataRevision;
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    this.controls.disabled = true;
-    this.controls.setAttribute("aria-busy", "true");
-    this.announce(pending, "pending");
-    try {
-      await work();
-      this.announce(success, "success");
-      return true;
-    } catch (error) {
-      if (revision === this.dataRevision) this.announce(localizeError(error, ...failure), "error");
-      return false;
-    } finally {
-      this.controls.disabled = false;
-      this.controls.removeAttribute("aria-busy");
-      this.focus(this.nextFocus ?? previous);
-      this.nextFocus = null;
-    }
-  }
-
-  private focus(target: HTMLElement | null): void {
-    if (target?.isConnected && !target.closest("[hidden]") && this.root.closest("dialog")?.open) {
-      target.focus({ preventScroll: true });
-    }
-  }
-
-  private announce(message: string, state: Announcement): void {
-    const status = element("youtube-status");
-    status.dataset.state = state;
-    setText(status, message);
-  }
-
-  private handle(button: HTMLButtonElement): void {
-    const action = button.dataset.youtubeAction;
-    if (action === "account-menu" || action === "playlist-menu") {
-      const menu = action === "account-menu" ? "account" : "playlist";
-      this.setMenu(this.menu === menu ? null : menu);
-      if (this.menu) this.focus(element("youtube-" + menu + "-menu").querySelector<HTMLButtonElement>("button:not([hidden])"));
+  async preview(id: string, area: HTMLElement, current: () => boolean): Promise<void> {
+    if (!current()) return;
+    if (!this.requireAccount()) {
+      area.replaceChildren();
       return;
     }
-    const trigger = this.menu && button.closest(".youtube-menu") ? this.control(this.menu + "-menu") : button;
-    this.setMenu(null);
-    switch (action) {
-      case "accept-policy":
-        this.policyAccepted = true;
-        try { localStorage.setItem(policyKey, "accepted"); } catch { /* Keep consent for this window. */ }
-        void this.show();
-        return;
-      case "retry": void this.show(); return;
-      case "connect": void this.connectAccount(); return;
-      case "disconnect": this.askConfirmation(
-        { action }, t("撤销 Google 授权并清除本次会话的歌单记录？YouTube 上的歌单会保留。", "Revoke Google access and clear playlist data for this session? Your playlists will remain on YouTube."), trigger,
-      ); return;
-      case "imported": case "mine":
-        if (action === "imported" || this.account?.connected) void this.run(() => this.loadList(action), t("正在读取歌单", "Loading playlists…"));
-        return;
-      case "create": this.edit("create"); return;
-      case "edit": this.edit("update"); return;
-      case "cancel-edit": case "cancel-confirm": this.dismiss(); return;
-      case "confirm": void this.confirm(); return;
-      case "back":
-        this.selected = null;
-        this.renderView();
-        this.focus(this.control(this.source));
-        return;
-      case "load":
-        if (button.dataset.playlistId) void this.loadPlaylist(button.dataset.playlistId);
-        return;
+    area.replaceChildren(empty(t("正在读取歌单", "Loading playlist…")));
+    const playlist = await this.send({ action: "load", playlistId: id }, "playlist");
+    if (!current()) return;
+    const heading = document.createElement("h3");
+    heading.textContent = playlist.title;
+    const summary = document.createElement("p");
+    summary.textContent = [trackCountLabel(playlist.items.length), playlist.description].filter(Boolean).join(" · ");
+    const list = document.createElement("ol");
+    list.className = "playlist-preview";
+    for (const track of playlist.items) {
+      const entry = document.createElement("li");
+      entry.textContent = [track.title, track.artist].filter(Boolean).join(" · ");
+      list.append(entry);
     }
-    const playlist = this.selected;
-    if (!playlist) return;
-    const playlistId = playlist.id;
-    const entryId = button.dataset.entryId;
-    switch (action) {
-      case "refresh": void this.import(playlistId); return;
-      case "add-song":
-        this.adding = !this.adding;
-        this.renderView();
-        if (this.adding) this.focus(element("youtube-song"));
-        return;
-      case "open":
-        this.focus(trigger);
-        void this.run(() => this.complete({ action, playlistId, videoId: button.dataset.videoId }), t("正在打开 YouTube Music", "Opening YouTube Music…"));
-        return;
-      case "forget":
-        this.askConfirmation({ action, playlistId }, t(`移除「${playlist.title}」在 Nasti 保存的歌单记录？`, `Remove the local Nasti copy of “${playlist.title}”?`), trigger);
-        return;
-      case "delete":
-        this.askConfirmation({ action, playlistId }, t(`删除「${playlist.title}」在线歌单？`, `Delete “${playlist.title}” from YouTube Music?`), trigger);
-        return;
-      case "remove": {
-        const track = playlist.items.find(item => item.entryId === entryId);
-        if (track) this.askConfirmation(
-          { action, playlistId, entryId: track.entryId },
-          t(`从在线歌单移除第 ${trackPosition(track.position)} 首「${track.title}」？`, `Remove track ${trackPosition(track.position)}, “${track.title}”, from the online playlist?`), button,
-        );
-        return;
-      }
-      case "move":
-        if (entryId && button.dataset.position !== undefined) {
-          void this.changePlaylist({ action, playlistId, entryId, position: Number(button.dataset.position) }, t("已更新曲序", "Track order updated"), button);
-        }
-    }
+    const save = this.control("import", "subscribe", playlist.canEdit ? t("同步到曲库", "Sync to library") : t("订阅歌单", "Subscribe to playlist"));
+    save.dataset.playlistId = id;
+    save.disabled = !playlist.canEdit && playlist.privacy !== "public";
+    area.replaceChildren(heading, summary, save, list);
   }
 
-  cancelConnection(): void {
-    if (!this.connecting || this.cancelConnect.disabled) return;
-    this.cancelConnect.disabled = true;
-    void this.complete({ action: "cancelConnect" }).catch(error => {
-      this.cancelConnect.disabled = false;
-      this.announce(localizeError(error, "取消登录失败，请重试", "Could not cancel sign-in. Try again."), "error");
+  decorate(column: PlaylistColumn | null, rows: HTMLElement[]): void {
+    if (this.column?.playlistId !== column?.playlistId) this.closeForms();
+    this.column = column;
+    const actions = element("overview-actions");
+    actions.replaceChildren();
+    setText(element("overview-description"), column?.subtitle ?? "");
+    if (!column) return;
+    actions.append(this.control("restart", "refresh", t("刷新歌单", "Refresh playlist")));
+    if (!column.isEditable) {
+      actions.append(this.control("remove", "forget", t("取消订阅", "Unsubscribe")));
+      return;
+    }
+    actions.append(
+      this.control("add", "add-song", t("添加歌曲", "Add track")),
+      this.control("editList", "edit", t("编辑歌单", "Edit playlist")),
+      this.control("remove", "delete", t("删除在线歌单", "Delete playlist on YouTube")),
+    );
+    const positions = column.tracks.map((track, index) => (track.trackNumber ?? index + 1) - 1);
+    rows.forEach((row, index) => {
+      const tools = document.createElement("div");
+      tools.className = "youtube-track-tools";
+      for (const [glyph, offset, label] of [["up", -1, t("上移", "Move up")], ["down", 1, t("下移", "Move down")]] as const) {
+        const move = this.control(glyph, "move", label);
+        const target = positions[index + offset];
+        move.disabled = target === undefined || target !== positions[index] + offset;
+        move.dataset.position = String(target);
+        tools.append(move);
+      }
+      tools.append(this.control("remove", "remove", t("从歌单移除", "Remove from playlist")));
+      row.append(tools);
     });
   }
 
-  private async connectAccount(): Promise<void> {
-    if (this.controls.disabled || !this.account?.canConnect) return;
-    this.connecting = true;
-    this.cancelConnect.disabled = false;
-    this.cancelConnect.hidden = false;
-    try {
-      const pending = this.run(async () => {
-        this.account = await this.request({ action: "connect" }, "status");
+  private async click(button: HTMLButtonElement): Promise<void> {
+    const action = button.dataset.youtubeAction;
+    if (action === "account") {
+      this.touchedAccount = true;
+      if (this.request && !this.connected) {
+        this.account = await this.send({ action: "status" }, "status");
         this.renderAccount();
-        if (!this.account.connected) throw new Error(t("尚未连接 YouTube，请重试", "Could not connect to YouTube. Try again."));
-        const pendingImport = Boolean(this.input.value.trim());
-        await this.loadList(pendingImport ? "imported" : "mine");
-        this.nextFocus = this.selected ? element("youtube-title") : pendingImport ? this.input : this.control("mine");
-      }, t("请在系统浏览器完成 Google 授权，完成后返回 Nasti。", "Authorize with Google in your system browser, then return to Nasti."), t("已连接 YouTube", "Connected to YouTube"));
-      this.focus(this.cancelConnect);
-      await pending;
-    } finally {
-      const restoreFocus = document.activeElement === this.cancelConnect;
-      this.connecting = false;
-      this.cancelConnect.hidden = true;
-      if (restoreFocus) this.focus(this.connect);
-    }
-  }
-
-  private async loadList(source: ListSource): Promise<void> {
-    this.playlists = await this.request({ action: source }, "lists");
-    this.source = source;
-    this.renderList();
-    this.renderView();
-  }
-
-  private async loadPlaylist(playlistId: string): Promise<void> {
-    await this.run(async () => {
-      this.showPlaylist(await this.request({ action: "load", playlistId }, "playlist"));
-      this.nextFocus = element("youtube-title");
-    }, t("正在读取歌单", "Loading playlist…"));
-  }
-
-  private async import(reference: string): Promise<void> {
-    if (!reference.trim() || !this.account?.connected) return;
-    await this.run(async () => {
-      const playlist = await this.request({ action: "import", reference: reference.trim() }, "playlist");
-      this.replaceSummary(playlist);
-      this.showPlaylist(playlist);
-      this.nextFocus = element("youtube-title");
-    }, t("正在同步歌单", "Syncing playlist…"), t("已导入本次会话", "Imported for this session"));
-  }
-
-  private async changePlaylist(request: YoutubeRequest, caption: string, move?: HTMLButtonElement): Promise<boolean> {
-    return this.run(async () => {
-      const playlist = await this.request(request, "playlist");
-      this.replaceSummary(playlist);
-      this.showPlaylist(playlist);
-      if (move?.dataset.entryId) {
-        const moved = this.findTrackButton(move.dataset.entryId, move.dataset.direction);
-        this.nextFocus = moved ?? element("youtube-title");
+        if (this.connected && !this.loggedInSync) void this.syncOwned();
       }
-    }, t("正在更新 YouTube 歌单", "Updating YouTube playlist…"), caption);
-  }
-
-  private findTrackButton(entryId: string, direction?: string): HTMLButtonElement | undefined {
-    const buttons = element("youtube-tracks").querySelectorAll<HTMLButtonElement>("[data-youtube-action=move]");
-    return [...buttons].find(button => button.dataset.entryId === entryId && button.dataset.direction === direction && !button.disabled)
-      ?? [...buttons].find(button => button.dataset.entryId === entryId && !button.disabled);
-  }
-
-  private edit(mode: EditMode): void {
-    const current = mode === "update" ? this.selected : null;
-    this.editing = mode;
-    setText(element("youtube-edit-title"), mode === "update" ? t("编辑在线歌单", "Edit playlist") : t("新建在线歌单", "New playlist"));
-    const name = element<HTMLInputElement>("youtube-name");
-    name.value = current?.title ?? "";
-    element<HTMLTextAreaElement>("youtube-note").value = current?.description ?? "";
-    element<HTMLSelectElement>("youtube-privacy").value = current?.privacy ?? "private";
-    this.renderView();
-    this.focus(name);
-  }
-
-  private async saveEdit(): Promise<void> {
-    const title = element<HTMLInputElement>("youtube-name").value.trim();
-    if (!title) {
-      this.announce(t("请输入歌单名称", "Enter a playlist name"), "error");
+      if (this.connected) this.setPopover(this.popover.hidden);
+      else this.openLogin();
       return;
     }
-    const values = {
-      title,
-      description: element<HTMLTextAreaElement>("youtube-note").value,
-      privacy: element<HTMLSelectElement>("youtube-privacy").value as YoutubePrivacy,
-    };
-    const request: YoutubeRequest = this.editing === "create"
-      ? { action: "create", ...values }
-      : { action: "update", playlistId: this.selected?.id ?? "", ...values };
-    await this.run(async () => {
-      const playlist = await this.request(request, "playlist");
-      this.editing = null;
-      this.replaceSummary(playlist);
-      this.showPlaylist(playlist);
-      this.nextFocus = element("youtube-title");
-    }, t("正在保存在线歌单", "Saving playlist…"), t("已保存在线歌单", "Playlist saved"));
+    if (action === "privacy" || action === "terms") {
+      await this.request?.({ action: "openPolicy", page: action === "privacy" ? "privacy" : "nastiTerms" });
+      return;
+    }
+    if (action === "close-login") { this.login.close(); this.avatar.focus(); return; }
+    if (action === "cancel-edit" || action === "cancel-confirm") { this.closeForms(); return; }
+    if (this.busy) return;
+    if (action === "connect") {
+      await this.perform(async () => {
+        this.notify(t("请在系统浏览器完成 Google 授权", "Complete Google authorization in your browser"), "info");
+        this.account = await this.send({ action: "connect" }, "status");
+        this.renderAccount();
+        this.login.close();
+        this.avatar.focus();
+        this.notify(t("已连接 Google 账号", "Google account connected"), "success");
+      });
+      if (this.connected) await this.syncOwned();
+      return;
+    }
+    if (action === "confirm") {
+      if (this.pending) await this.mutate(this.pending);
+      return;
+    }
+    if (action !== "forget" && !this.requireAccount()) return;
+    if (action === "sync") return this.syncOwned();
+    if (action === "subscribe" && button.dataset.playlistId) {
+      await this.mutate({ action: "import", reference: button.dataset.playlistId });
+      if (button.isConnected) button.disabled = this.lastMutationSucceeded;
+      return;
+    }
+    if (action === "disconnect") {
+      if (!window.confirm(t("断开 Google 账号并撤销授权？", "Disconnect your Google account and revoke authorization?"))) return;
+      return this.mutate({ action: "disconnect" });
+    }
+    if (action === "create") { this.openEdit(null); return; }
+    const column = this.column;
+    if (!column) return;
+    const playlistId = column.playlistId;
+    if (action === "edit") {
+      const playlist = await this.send({ action: "cached", playlistId }, "playlist");
+      if (this.column?.playlistId === playlistId) this.openEdit(playlist);
+    } else if (action === "add-song") {
+      const add = element("youtube-add");
+      const open = add.hidden;
+      this.closeForms();
+      add.hidden = !open;
+      if (open) element("youtube-song").focus();
+    } else if (action === "refresh") {
+      await this.mutate({ action: "load", playlistId });
+    } else if (action === "forget" || action === "delete") {
+      this.confirm({ action, playlistId }, action === "forget"
+        ? t(`取消订阅「${column.title}」？`, `Unsubscribe from “${column.title}”?`)
+        : t(`从 YouTube 删除「${column.title}」？`, `Delete “${column.title}” from YouTube?`));
+    } else {
+      const entryId = button.closest<HTMLElement>("[data-entry-id]")?.dataset.entryId;
+      if (!entryId) return;
+      if (action === "remove") this.confirm({ action, playlistId, entryId }, t("从在线歌单移除这首曲目？", "Remove this track from the online playlist?"));
+      if (action === "move") await this.mutate({ action, playlistId, entryId, position: Number(button.dataset.position) });
+    }
   }
 
-  private askConfirmation(request: YoutubeRequest, caption: string, trigger: HTMLButtonElement): void {
-    this.confirmation = { request, caption, trigger };
-    this.renderView();
-    this.focus(this.control("cancel-confirm"));
-  }
-
-  private async confirm(): Promise<void> {
-    const pending = this.confirmation;
-    if (!pending) return;
-    const request = pending.request;
-    if (request.action === "disconnect") {
-      this.revoking = true;
-      this.clearData();
-      if (this.account) this.account = { ...this.account, connected: false };
-      this.renderAccount();
+  private async syncOwned(): Promise<void> {
+    if (this.busy) return;
+    this.loggedInSync = true;
+    await this.perform(async () => {
       try {
-        await this.run(async () => {
-          this.account = await this.request(request, "status");
-          this.renderAccount();
-        }, t("正在撤销 Google 授权", "Revoking Google access…"), t("已撤销授权", "Access revoked"), [
-          "本地记录已清除。Nasti 运行时会重试撤权。你也可以在 Google 账号权限中完成撤权。",
-          "Local data cleared. Nasti will retry while running. You can also revoke access in Google account permissions.",
-        ]);
+        await this.send({ action: "sync" }, "lists");
       } finally {
-        this.revoking = false;
+        await this.changed();
       }
-      return;
-    }
-    await this.run(async () => {
-      switch (request.action) {
-        case "remove":
-          this.showPlaylist(await this.request(request, "playlist"));
-          break;
-        case "delete": case "forget":
-          await this.complete(request);
-          this.playlists = this.playlists.filter(playlist => playlist.id !== request.playlistId
-            || request.action === "forget" && this.source === "mine");
-          this.selected = null;
-          break;
+      this.notify(t("YouTube 歌单已同步", "YouTube playlists synced"), "success");
+    });
+  }
+
+  private lastMutationSucceeded = false;
+
+  private async mutate(request: YoutubeRequest): Promise<void> {
+    this.lastMutationSucceeded = false;
+    if (request.action !== "forget" && !this.requireAccount()) return;
+    await this.perform(async () => {
+      if (!this.request) throw new Error("YouTube IPC unavailable");
+      let reply: YoutubeReply;
+      try {
+        reply = await this.request(request);
+      } catch (error) {
+        if (request.action === "disconnect") {
+          this.account = await this.send({ action: "status" }, "status");
+          this.renderAccount();
+          if (!this.connected) await this.changed();
+        }
+        throw error;
       }
-      this.confirmation = null;
-      this.renderList();
-      this.renderView();
-      this.nextFocus = this.selected ? element("youtube-title") : this.control(this.source);
-    }, t("正在提交操作", "Applying changes…"), t("操作已完成", "Changes applied"));
-  }
-
-  private showPlaylist(playlist: YoutubePlaylist): void {
-    if (this.selected?.id !== playlist.id) {
-      this.adding = false;
-      element<HTMLInputElement>("youtube-song").value = "";
-    }
-    this.selected = playlist;
-    const title = element("youtube-title");
-    title.title = playlist.title;
-    setText(title, playlist.title);
-    setText(element("youtube-description"), playlist.description);
-    const snapshot = element("youtube-snapshot");
-    if (playlist.importedAt == null) snapshot.title = "";
-    else {
-      const updated = new Intl.DateTimeFormat(dateLocale(), { dateStyle: "medium", timeStyle: "short" }).format(playlist.importedAt);
-      snapshot.title = t(`更新于 ${updated}`, `Updated ${updated}`);
-    }
-    setText(snapshot, `${privacyLabel(playlist.privacy)} · ${trackCountLabel(playlist.items.length)}`);
-    const refresh = this.control("refresh");
-    const saved = playlist.importedAt != null;
-    setIcon(refresh, saved ? "restart" : "import", saved ? t("刷新歌单", "Refresh playlist") : t("导入歌单", "Import playlist"));
-    this.control("refresh").disabled = !this.account?.connected;
-    this.control("forget").hidden = playlist.importedAt == null;
-    const editable = playlist.canEdit && Boolean(this.account?.connected);
-    this.control("edit").hidden = this.control("delete").hidden = !editable;
-    this.control("add-song").hidden = !editable;
-    const tracks = element("youtube-tracks");
-    tracks.replaceChildren(...playlist.items.map(item => this.makeTrack(item, playlist.items.length, editable)));
-    if (!playlist.items.length) {
-      const placeholder = document.createElement("li");
-      placeholder.append(empty(t("歌单暂无歌曲", "This playlist has no tracks")));
-      tracks.append(placeholder);
-    }
-    this.renderView();
-  }
-
-  private makeTrack(item: YoutubePlaylistItem, count: number, editable: boolean): HTMLLIElement {
-    const row = document.createElement("li");
-    row.className = "youtube-track";
-    const index = document.createElement("small");
-    const positionLabel = trackPosition(item.position);
-    index.textContent = positionLabel;
-    const tools = document.createElement("div");
-    tools.className = "youtube-track-tools";
-    const play = this.iconButton("link", "open", t(`在 YouTube Music 播放 ${item.title}`, `Play ${item.title} on YouTube Music`));
-    play.dataset.videoId = item.videoId;
-    play.disabled = !item.videoId;
-    tools.append(play);
-    if (editable) {
-      for (const [direction, offset, zh, en] of [["up", -1, "上移", "up"], ["down", 1, "下移", "down"]] as const) {
-        const position = item.position + offset;
-        const move = this.iconButton(direction, "move", t(`${zh}第 ${positionLabel} 首 ${item.title}`, `Move track ${positionLabel}, ${item.title}, ${en}`));
-        move.dataset.entryId = item.entryId;
-        move.dataset.direction = direction;
-        move.dataset.position = String(position);
-        move.disabled = !item.videoId || position < 0 || position >= count;
-        tools.append(move);
+      if (this.signal.aborted) return;
+      if (reply.kind === "status") {
+        this.account = reply.value;
+        this.loggedInSync = false;
+        this.renderAccount();
+        this.setPopover(false);
       }
-      const remove = this.iconButton("remove", "remove", t(`移除第 ${positionLabel} 首 ${item.title}`, `Remove track ${positionLabel}, ${item.title}`));
-      remove.dataset.entryId = item.entryId;
-      tools.append(remove);
-    }
-    row.append(index, this.copy(item.title, item.artist), tools);
-    return row;
+      this.closeForms();
+      await this.changed(reply.kind === "playlist" ? reply.value.id : undefined);
+      this.lastMutationSucceeded = true;
+      this.notify(t("操作已完成", "Changes applied"), "success");
+    });
   }
 
-  private iconButton(glyph: IconName, action: string, label: string): HTMLButtonElement {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "icon-button";
-    button.dataset.youtubeAction = action;
-    button.title = label;
-    button.setAttribute("aria-label", label);
-    button.innerHTML = icon(glyph);
-    return button;
+  private confirm(request: YoutubeRequest, label: string): void {
+    this.closeForms();
+    this.pending = request;
+    setText(element("youtube-confirm-label"), label);
+    element("youtube-confirm").hidden = false;
+    element("youtube-confirm").querySelector("button")?.focus();
   }
 
-  private copy(title: string, secondary: string): HTMLElement {
-    const copy = document.createElement("span");
-    copy.className = "track-copy";
-    const name = document.createElement("strong");
-    name.textContent = name.title = title;
-    const byline = document.createElement("small");
-    byline.textContent = byline.title = secondary;
-    copy.append(name, byline);
-    return copy;
+  private openEdit(playlist: YoutubePlaylist | null): void {
+    this.closeForms();
+    this.editing = playlist ? "update" : "create";
+    setText(element("youtube-edit-title"), playlist ? t("编辑在线歌单", "Edit playlist") : t("新建 YouTube 歌单", "Create YouTube playlist"));
+    const name = element<HTMLInputElement>("youtube-name");
+    name.value = playlist?.title ?? "";
+    element<HTMLTextAreaElement>("youtube-note").value = playlist?.description ?? "";
+    element<HTMLSelectElement>("youtube-privacy").value = playlist?.privacy ?? "private";
+    element("youtube-edit").hidden = false;
+    name.focus();
   }
 
-  private replaceSummary(playlist: YoutubePlaylist): void {
-    const eligible = this.source === "mine" ? playlist.canEdit : playlist.importedAt != null;
-    if (eligible) {
-      const index = this.playlists.findIndex(item => item.id === playlist.id);
-      if (index < 0) this.playlists.unshift(playlist);
-      else this.playlists[index] = playlist;
-    }
-    this.renderList();
+  private closeForms(): void {
+    this.editing = this.pending = null;
+    for (const id of ["youtube-edit", "youtube-add", "youtube-confirm"]) element(id).hidden = true;
+    element<HTMLInputElement>("youtube-song").value = "";
   }
 
-  private renderList(): void {
-    for (const source of ["imported", "mine"] as const) {
-      this.control(source).setAttribute("aria-pressed", String(this.source === source));
-    }
-    const list = element("youtube-lists");
-    list.replaceChildren(...this.playlists.map(playlist => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "youtube-list-row";
-      button.dataset.youtubeAction = "load";
-      button.dataset.playlistId = playlist.id;
-      button.append(this.copy(playlist.title, privacyLabel(playlist.privacy)));
-      return button;
-    }));
-    if (!this.playlists.length) list.append(empty(this.source === "mine"
-      ? t("账号暂无可管理歌单", "This account has no playlists to manage")
-      : t("暂无已导入歌单", "No playlists imported")));
+  private setPopover(open: boolean): void {
+    this.popover.hidden = !open;
+    this.avatar.setAttribute("aria-expanded", String(open));
+    if (open) this.popover.querySelector("button")?.focus();
   }
 
   private renderAccount(): void {
-    const status = this.account;
-    this.renderSignin();
-    this.connect.hidden = !status || status.connected;
-    this.connect.disabled = !status?.canConnect;
-    element("youtube-account-tools").hidden = !status?.connected;
-    this.control("mine").hidden = this.control("create").hidden = !status?.connected;
-    this.importForm.querySelector("button")!.disabled = !status?.connected;
-    if (this.selected) this.showPlaylist(this.selected);
+    this.avatar.dataset.connected = String(this.connected);
+    setText(element("account-channel"), this.account?.channelId ?? "");
+    element("login-setup").hidden = Boolean(this.account?.canConnect);
+    const button = this.login.querySelector<HTMLButtonElement>('[data-youtube-action="connect"]')!;
+    button.disabled = !this.account?.canConnect || this.busy;
   }
 
-  private renderSignin(): void {
-    const status = this.account;
-    const help = element("youtube-signin-help");
-    help.hidden = !status || status.connected || Boolean(this.selected || this.confirmation || this.editing);
-    setText(help, status?.canConnect
-      ? t("请在系统浏览器中授权后返回 Nasti。登录和导入仅用于本次会话。", "Authorize in your browser, then return to Nasti. Sign-in and imports last for this session.")
-      : t("此版本尚未启用 Google 登录。", "Google sign-in is not available in this build."));
+  private control(glyph: IconName, action: string, label: string): HTMLButtonElement {
+    const button = actionButton(glyph, action, label);
+    delete button.dataset.action;
+    button.dataset.youtubeAction = action;
+    return button;
   }
 
-  private renderView(): void {
-    const overlay = Boolean(this.confirmation || this.editing);
-    element("youtube-navigation").hidden = Boolean(this.selected) || overlay;
-    const policy = element("youtube-policy");
-    policy.dataset.accepted = String(this.policyAccepted);
-    this.acceptPolicy.hidden = this.policyAccepted;
-    this.renderSignin();
-    const add = this.control("add-song");
-    const adding = this.adding && !add.hidden && Boolean(this.selected) && !overlay;
-    element("youtube-add").hidden = !adding;
-    add.setAttribute("aria-expanded", String(adding));
-    this.importForm.hidden = !this.policyAccepted || Boolean(this.selected) || overlay;
-    element("youtube-list-view").hidden = !this.policyAccepted || Boolean(this.selected) || overlay;
-    element("youtube-detail").hidden = !this.selected || overlay;
-    element("youtube-edit").hidden = !this.editing || Boolean(this.confirmation);
-    element("youtube-confirm").hidden = !this.confirmation;
-    setText(element("youtube-confirm-label"), this.confirmation?.caption ?? "");
+  private async execute(fn: () => Promise<void>): Promise<void> {
+    try {
+      await fn();
+    } catch (error) {
+      if (!this.signal.aborted) this.notify(localizeError(error), "error");
+    }
+  }
+
+  private async perform(fn: () => Promise<void>): Promise<void> {
+    if (this.busy || this.signal.aborted) return;
+    this.busy = true;
+    this.renderAccount();
+    try {
+      await this.execute(fn);
+    } finally {
+      this.busy = false;
+      if (!this.signal.aborted) this.renderAccount();
+    }
+  }
+
+  private async send<K extends keyof ReplyValues>(
+    request: YoutubeRequest, kind: K,
+  ): Promise<ReplyValues[K]> {
+    if (!this.request) throw new Error(t("请在 Nasti 桌面客户端连接 YouTube", "Connect to YouTube from the Nasti desktop app"));
+    const reply = await this.request(request);
+    if (reply.kind !== kind || !("value" in reply)) throw new Error(t("YouTube 响应无效", "Invalid YouTube response"));
+    return reply.value as ReplyValues[K];
   }
 }

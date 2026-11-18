@@ -24,3 +24,17 @@ CREATE TABLE IF NOT EXISTS library_archive_tracks (
     media_id TEXT PRIMARY KEY,
     record_json TEXT NOT NULL
 );
+
+-- Imported YouTube playlist snapshots. IDs and positions come from playlistItems.
+CREATE TABLE IF NOT EXISTS library_youtube_playlists (
+    id TEXT PRIMARY KEY,
+    account_id TEXT,
+    imported_at INTEGER NOT NULL,
+    playlist_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS library_youtube_media (
+    id TEXT PRIMARY KEY,
+    track_json TEXT NOT NULL,
+    saved_at INTEGER NOT NULL DEFAULT 0
+);

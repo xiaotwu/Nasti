@@ -113,9 +113,9 @@
 
 ## Get Nasti / 下载与构建
 
-Download the latest Apple Silicon macOS build from GitHub Releases. Nasti starts with an empty archive, and the top bar opens the licensed catalog and playlist import. Where Google sign-in is available, authorize YouTube Music in your system browser and return to Nasti.
+Download the Apple Silicon DMG from GitHub Releases and drag Nasti to Applications. The archive starts empty. The top bar opens search, the playlist overview, settings, and your Google account. Connect through your system browser to sync the playlists you own, edit them in the overview, or subscribe to public playlists.
 
-从 GitHub Releases 下载最新的 Apple Silicon macOS 版本。首次打开为空档案，从顶栏检索授权目录或导入歌单。Google 登录可用时，在 YouTube Music 面板阅读隐私政策和条款，再到系统浏览器登录并授权。
+从 GitHub Releases 下载 Apple Silicon 的 DMG，将 Nasti 拖入「应用程序」。首次打开为空曲库。右上角可搜索、进入曲库总览、打开设置或连接 Google 账号。连接后自动同步自有歌单，可在总览内编辑，也可订阅公开歌单。
 
 [GitHub Releases](https://github.com/xiaotwu/Nasti/releases) · [Nasti 官网](https://xiaotwu.github.io/Nasti/) · [隐私政策](https://xiaotwu.github.io/Nasti/privacy.html) · [使用条款](https://xiaotwu.github.io/Nasti/terms.html)
 

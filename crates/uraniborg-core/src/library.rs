@@ -9,7 +9,7 @@ use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::Duration,
 };
 
@@ -45,7 +45,6 @@ pub enum LibraryError {
 pub struct Library {
     pool: SqlitePool,
     catalog: Arc<Catalog>,
-    youtube_snapshots: Mutex<youtube_store::YoutubeSnapshots>,
 }
 
 impl Library {
@@ -61,13 +60,11 @@ impl Library {
             .connect_with(options)
             .await?;
         sqlx::raw_sql(SCHEMA).execute(&pool).await?;
-        let library = Self {
-            pool,
-            catalog,
-            youtube_snapshots: Mutex::default(),
-        };
-        library.scrub_legacy_youtube_snapshots().await?;
+        let library = Self { pool, catalog };
         library.migrate_source_entries().await?;
+        library.migrate_youtube_subscriptions().await?;
+        library.expire_youtube_snapshots().await?;
+        #[cfg(test)]
         library.seed().await?;
         Ok(library)
     }
@@ -114,6 +111,7 @@ impl Library {
         Ok(())
     }
 
+    #[cfg(test)]
     async fn seed(&self) -> Result<(), LibraryError> {
         let mut tx = self.pool.begin().await?;
         let inserted = sqlx::query("INSERT OR IGNORE INTO library_bootstrap (id) VALUES (1)")
@@ -936,12 +934,9 @@ mod tests {
     #[tokio::test]
     async fn single_import_after_source_reorder_reuses_the_shifted_entry() {
         let db = tempfile::tempdir().unwrap();
-        let library = Library::open(
-            &db.path().join("library.sqlite3"),
-            test_catalog(db.path()),
-        )
-        .await
-        .unwrap();
+        let library = Library::open(&db.path().join("library.sqlite3"), test_catalog(db.path()))
+            .await
+            .unwrap();
         let mut album = crate::archive::fixture_album();
         library.apply_archive(&album, Some(0)).await.unwrap();
         let initial = library.columns().await.unwrap().pop().unwrap();

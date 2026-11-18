@@ -23,6 +23,7 @@ fn main() {
             "AVFoundation",
             "CoreAudio",
             "CoreMedia",
+            "MediaPlayer",
             "MediaToolbox",
             "QuartzCore",
             "WebKit",

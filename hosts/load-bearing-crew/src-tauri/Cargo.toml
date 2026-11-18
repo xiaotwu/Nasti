@@ -9,13 +9,13 @@ uraniborg-core = { path = "../../../crates/uraniborg-core" }
 convallis-pipe = { path = "../../../crates/convallis-pipe" }
 serde.workspace = true
 serde_json.workspace = true
+tempfile = "3"
 tokio.workspace = true
 reqwest = { workspace = true, features = ["form", "json"] }
 base64 = "0.22"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 tauri = { version = "2", features = ["macos-private-api"] }
-tempfile = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 flate2 = "1"
