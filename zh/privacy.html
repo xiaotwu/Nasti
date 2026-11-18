@@ -63,8 +63,8 @@
 <p>Nasti 通过 HTTPS 向 Google 和 YouTube 发送请求。授权回调在你的 Mac 上完成，Nasti 使用 PKCE 保护令牌交换。</p>
 <ul>
 <li><strong>授权码。</strong> 只用于交换令牌，不保存到本地曲库。</li>
-<li><strong>访问令牌和刷新令牌。</strong> Nasti 将短期访问令牌保存在内存中，并通过 macOS 钥匙串保存刷新令牌，用于重新连接。撤销授权成功后会移除刷新令牌。如果 Google 报告授权无效，Nasti 会尝试移除失效的令牌。</li>
-<li><strong>已保存的歌单快照。</strong> 导入歌单时，Nasti 将歌单详情、条目、关联的频道标识符和保存或刷新时间写入 Mac 上的 SQLite 曲库。导入并不下载 YouTube 录音。连续 30 天未刷新的快照会在下次打开曲库或读取已保存的歌单记录时移除。</li>
+<li><strong>访问令牌和刷新令牌。</strong> Nasti 0.1.2 将两个令牌保存在应用内存中。应用运行时会定期核验授权。Google 报告授权失效时，应用会清除会话数据。如果一小时内无法确认授权，应用会清除歌单数据，并可在运行期间尝试恢复连接。</li>
+<li><strong>歌单快照。</strong> Nasti 0.1.2 仅在当前会话的内存中保留导入的歌单、条目、频道标识符和导入时间。退出应用时会释放这些记录。应用持续运行时，达到 24 小时的保留阈值后会清理歌单记录。导入不会下载 YouTube 录音。旧版曾将令牌存入 macOS 钥匙串，将快照存入 SQLite 曲库。新版首次启动会从这些位置清理 Nasti 的旧记录。你或备份服务另外保存的副本由原渠道管理。</li>
 </ul>
 <p>Nasti 将本地曲库、Vault 中符合条件的录音副本以及应用偏好保存在你的 Mac 上。应用还会在本机记录你是否已同意适用于 YouTube Music 功能的本政策。</p>
 <h2 id="sharing-and-service-providers">数据共享与服务提供方</h2>
@@ -78,8 +78,8 @@
 <h2 id="delete-records-or-revoke-access">删除记录或撤销授权</h2>
 <ol>
 <li>如需删除一条本地歌单记录，在 YouTube Music 面板选择<strong>移除本地记录</strong>。该歌单仍保留在 YouTube 上。</li>
-<li>如需停止 Nasti 访问并移除已保存的账号数据，在面板的 Google 账号菜单中选择<strong>撤销授权</strong>。Nasti 会请求 Google 撤销授权，并在撤销成功时移除该账号的令牌和本地快照。</li>
-<li>如果 Nasti 无法连接 Google 并完成撤销，请在联网后重试。你也可以在 <a href="https://security.google.com/settings/security/permissions">Google 账号安全设置</a>中撤销。随后联网并重新打开 Nasti 的 YouTube Music 面板，让应用检查授权。检测到授权失效后，Nasti 会清除关联的本地快照。</li>
+<li>如需停止 Nasti 访问并清除会话歌单数据，请在面板的 Google 账号菜单中选择<strong>撤销授权</strong>。Nasti 会清除本地歌单数据并立即向 Google 发出撤权请求。若请求失败，应用会在运行期间重试。</li>
+<li>你可以通过 <a href="https://security.google.com/settings/security/permissions">Google 账号安全设置</a>撤销或确认访问权限，退出 Nasti 后也可以操作。退出应用会释放会话数据，Google 账号内的授权仍由你管理。</li>
 </ol>
 <p>如需从 YouTube 删除所选歌单，使用单独的<strong>删除在线歌单</strong>操作。移除 Vault 中的本地副本可释放 Mac 上的存储空间。</p>
 <h2 id="contact-and-policy-updates">联系方式与政策更新</h2>

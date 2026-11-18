@@ -66,8 +66,8 @@
 <p>Nasti sends requests to Google and YouTube over HTTPS. The authorization callback stays on your Mac and uses PKCE to protect the token exchange.</p>
 <ul>
 <li><strong>Authorization code.</strong> Nasti uses the code in the token exchange and does not save it to the local library.</li>
-<li><strong>Access and refresh tokens.</strong> Nasti keeps short-lived access tokens in memory and uses macOS Keychain to retain the refresh token for reconnecting. It removes the refresh token after successful revocation or tries to remove it when Google reports that the grant is invalid.</li>
-<li><strong>Saved playlist snapshots.</strong> An import stores playlist details and entries in Nasti’s SQLite library on your Mac, with the associated channel identifier and the save or refresh time. Imports do not download YouTube recordings. Nasti removes snapshots that have gone 30 days without a refresh the next time it opens the library or reads the saved records.</li>
+<li><strong>Access and refresh tokens.</strong> Nasti 0.1.2 keeps both tokens in memory. It checks authorization periodically while running and clears session data if Google reports that the grant is invalid. If authorization cannot be confirmed for an hour, Nasti clears playlist data and can try to reconnect while it runs.</li>
+<li><strong>Playlist snapshots.</strong> Nasti 0.1.2 keeps imported playlists, entries, channel identifiers and their import times in memory for the current app session. These records are released when the app quits. The app also clears them during a long-running session once its 24-hour retention threshold is reached. Importing does not download YouTube recordings. Earlier builds stored tokens in macOS Keychain and snapshots in the SQLite library. On first launch, the new version removes the old Nasti records from those stores. Copies made separately by you or your backup service are managed there.</li>
 </ul>
 <p>Nasti stores your local library, Vault copies of eligible recordings, and app preferences on your Mac. The app also keeps a local record of your acceptance of this policy for the YouTube Music feature.</p>
 <h2 id="sharing-and-service-providers">Sharing and service providers</h2>
@@ -81,8 +81,8 @@
 <h2 id="delete-records-or-revoke-access">Delete records or revoke access</h2>
 <ol>
 <li>To delete one local playlist record, choose <strong>Remove local snapshot</strong> in the YouTube Music panel. The playlist remains on YouTube.</li>
-<li>To stop Nasti’s access and remove the saved account data, choose <strong>Revoke access</strong> in the panel’s Google account menu. Nasti asks Google to revoke the grant and removes the account’s token and local snapshots when revocation succeeds.</li>
-<li>If Nasti cannot reach Google to complete revocation, retry once you are online. You can also revoke access in your <a href="https://security.google.com/settings/security/permissions">Google Account security settings</a>. Then reopen Nasti’s YouTube Music panel while online so it can check the grant and clear the associated local snapshots when it detects that access is invalid.</li>
+<li>To stop Nasti’s access and clear the session’s playlist data, choose <strong>Revoke access</strong> in the panel’s Google account menu. Nasti clears the local playlist data and immediately sends a revocation request to Google. If the request fails, Nasti retries while the app runs.</li>
+<li>Use <a href="https://security.google.com/settings/security/permissions">Google Account security settings</a> to remove or confirm access, including after quitting Nasti. The app releases session data on exit. The grant in your Google account remains until you or Google remove it.</li>
 </ol>
 <p>The separate <strong>Delete online playlist</strong> action removes the selected playlist from YouTube. Removing a local Vault copy frees space on your Mac.</p>
 <h2 id="contact-and-policy-updates">Contact and policy updates</h2>
