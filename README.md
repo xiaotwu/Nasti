@@ -1,8 +1,8 @@
-# Nasti Beta
+# Nasti
 
-Nasti is a macOS music player built with Tauri, Rust and Three.js. This beta starts with an empty library. On Apple Silicon, use the search drawer to access the supported licensed Internet Archive catalog. When Google sign-in is enabled by the publisher, YouTube Music playlist management uses your account authorization and opens playback in YouTube Music. The beta uses a separate application identifier and storage from the local development app.
+Nasti is a macOS music player built with Tauri, Rust and Three.js. On Apple Silicon, use the search drawer to access the supported licensed Internet Archive catalog. When Google sign-in is available, Nasti uses your authorization to manage YouTube Music playlists. YouTube Music opens playback in the browser. Upgrades from the prerelease keep the same app identifier and library.
 
-Nasti 是基于 Tauri、Rust 和 Three.js 的 macOS 音乐播放器。beta 面向 Apple Silicon，首次打开时曲库为空。可在检索抽屉访问支持的 Internet Archive 授权目录。发布者启用 Google 登录后，YouTube Music 歌单管理使用你的账号授权，曲目由 YouTube Music 打开。beta 使用独立的应用标识和数据目录。
+Nasti 是基于 Tauri、Rust 和 Three.js 的 macOS 音乐播放器，支持 Apple Silicon。可在检索抽屉访问 Internet Archive 授权目录。Google 登录可用时，Nasti 使用你的账号授权来管理 YouTube Music 歌单，曲目在浏览器中播放。从预发行版升级时沿用应用标识和曲库。
 
 ## Library and account / 曲库与账号
 
