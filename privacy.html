@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Nasti privacy policy for the Nasti macOS music player.">
+  <title>Nasti privacy policy</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="shell">
+    <a class="wordmark" href="./">Nasti</a>
+    <nav aria-label="Site navigation">
+      <a href="./privacy.html">Privacy</a>
+      <a href="./terms.html">Terms</a>
+      <a href="https://github.com/xiaotwu/Nasti">GitHub</a>
+    </nav>
+  </header>
+  <main class="shell">
+<h1>Nasti privacy policy</h1>
+<p>Nasti uses YouTube API Services when you connect your Google account and use YouTube Music playlist features. Google handles sign-in and consent in your system browser. Nasti receives an authorization code, exchanges it for tokens and calls the YouTube Data API from your device. Google handles its use of your information under the <a href="https://policies.google.com/privacy">Google Privacy Policy</a>.</p>
+<h2>Data and purpose</h2>
+<p>Nasti reads your YouTube channel identifier, playlist names, descriptions and visibility, and playlist entries such as track titles, creator names, video identifiers and order. Nasti uses this information to show, import and refresh playlists and to carry out playlist actions you choose. The permission Google offers for playlist editing covers more than playlists. Nasti uses it for the channel lookup and playlist functions described here.</p>
+<p>OAuth access tokens are held in memory. Nasti uses macOS Keychain to store the refresh token used to reconnect. Nasti saves playlists you import as snapshots in its local SQLite library. Snapshots expire after 30 days unless refreshed. Nasti clears expired snapshots when opening the library and when reading saved YouTube playlists. The desktop implementation sends account and playlist requests directly to Google and YouTube. It has no Nasti server that receives those tokens or playlist snapshots. When you open a playlist or track on YouTube Music, your browser handles the request under YouTube's policies.</p>
+<h2>Delete data or revoke access</h2>
+<p>In Nasti, use <strong>Remove local record</strong> on a saved playlist to delete its local snapshot. Use <strong>Revoke access</strong> in the YouTube Music account menu to revoke the grant and clear the account’s saved snapshots. These actions leave the online playlists in your Google account. The separate <strong>Delete playlist</strong> action deletes the online playlist you select and requires confirmation.</p>
+<p>You can also revoke Nasti’s access in your <a href="https://myaccount.google.com/connections">Google account’s third-party connections</a>. When Nasti next discovers that its grant is invalid, it clears the account’s saved snapshots. To request help with your data or ask a privacy question, email <a href="mailto:xiaotongwu116@gmail.com">Nasti support</a>.</p>
+  </main>
+  <footer class="shell"><a href="mailto:xiaotongwu116@gmail.com">Contact Nasti support</a></footer>
+</body>
+</html>
