@@ -1,29 +1,69 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Nasti for the Nasti macOS music player.">
+  <meta name="description" content="A music player for Apple Silicon Macs shaped like a three-dimensional archive.">
   <meta name="google-site-verification" content="984-k0gB8Qv5c0CXQQEQW5GQmTC17ZVHmuP4-TtX9EE">
-  <title>Nasti</title>
+  <link rel="icon" href="./assets/nasti-icon.png">
+  <title>Nasti · Archive music player for Mac</title>
+  <script src="./theme.js"></script>
   <link rel="stylesheet" href="./style.css">
 </head>
-<body>
-  <header class="shell">
-    <a class="wordmark" href="./">Nasti</a>
-    <nav aria-label="Site navigation">
-      <a href="./privacy.html">Privacy</a>
-      <a href="./terms.html">Terms</a>
-      <a href="https://github.com/xiaotwu/Nasti">GitHub</a>
-    </nav>
+<body class="home">
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="frame masthead">
+      <a class="wordmark" href="./"><img src="./assets/nasti-icon.png" width="30" height="30" alt="">Nasti</a>
+      <button type="button" class="search-trigger" data-search-trigger hidden><span>Search</span><kbd>⌘ K</kbd></button>
+      <nav class="top-nav" aria-label="Main navigation">
+        <a class="nav-home" href="./" aria-current="page">Home</a>
+        <a class="nav-guide" href="./guide.html">Guide</a>
+        <a class="nav-releases" href="https://github.com/xiaotwu/Nasti/releases">Releases</a>
+        <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch theme" hidden></button>
+        <a class="icon-link nav-github" href="https://github.com/xiaotwu/Nasti" aria-label="GitHub" title="GitHub"><svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38l-.01-1.49c-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.6 7.6 0 0 1 8 3.86c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48l-.01 2.2c0 .21.15.45.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
+        <a class="icon-link lang-toggle" href="./zh/" hreflang="zh-CN" lang="zh-CN" aria-label="切换为简体中文" title="简体中文"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h11M8.5 3v3M5 8c1.2 3 3.3 5.4 6.6 7M12 6c-.9 4.5-3.7 8-8 10M13.2 21l4.3-10 4.3 10m-7.3-3h6"/></svg></a>
+      </nav>
+    </div>
   </header>
-  <main class="shell">
-<h1>Nasti</h1>
-<p>Nasti is a music player for Apple Silicon Macs. Browse and play recordings from the supported licensed Internet Archive catalog, organize your library and keep selected tracks in the offline Vault.</p>
-<p>The optional YouTube Music integration uses YouTube Data API Services with your Google authorization. Availability depends on the release and Google’s approval status. It imports and manages playlists you choose. YouTube Music playback opens in your browser.</p>
-<p>Nasti starts with an empty library. Open Search to find licensed Internet Archive recordings or use Import Playlist to add a supported release.</p>
-<p><a href="https://github.com/xiaotwu/Nasti/releases">Download Nasti</a> · <a href="./privacy.html">Privacy policy</a> · <a href="./terms.html">Terms of use</a> · <a href="https://github.com/xiaotwu/Nasti">Source code</a></p>
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-grid" aria-hidden="true"></div>
+      <div class="boot-figure" role="img" aria-label="Nasti reaches forward with a pen through the prism from the app’s opening animation">
+        <div class="prism-pane" aria-hidden="true"></div>
+        <div class="prism-hand" aria-hidden="true"></div>
+      </div>
+      <div class="frame hero-copy">
+        <h1 id="hero-title">Nasti</h1>
+        <p class="hero-brand"><strong>Rhine Lab Acoustic Terminal</strong></p>
+        <p class="lede">A Music Player Inspired by Nasti from <em>Arknights</em>.</p>
+        <div class="actions">
+          <a class="action secondary" href="#archive">View archive</a>
+          <a class="action primary" href="https://github.com/xiaotwu/Nasti/releases">Download <span aria-hidden="true">↓</span></a>
+          <a class="action secondary" href="./guide.html">Get started <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+      <p class="hero-credit"><a href="https://github.com/xiaotwu">Tony</a><span aria-hidden="true">·</span><a href="./privacy.html">Privacy</a><span aria-hidden="true">·</span><a href="./terms.html">Terms</a></p>
+    </section>
+    <section id="archive" class="frame feature-section" aria-labelledby="features-title">
+      <h2 id="features-title">Built around your library.</h2>
+      <dl class="feature-list">
+        <div><dt>Archive</dt><dd>Explore playlists and tracks as rows of cassettes, then open the one you want.</dd></div>
+        <div><dt>Licensed catalog</dt><dd>Search supported Internet Archive recordings or import a release by link.</dd></div>
+        <div><dt>Offline Vault</dt><dd>Save eligible recordings on your Mac for listening without a connection.</dd></div>
+      </dl>
+    </section>
   </main>
-  <footer class="shell"><a href="mailto:xiaotongwu116@gmail.com">Contact Nasti support</a></footer>
+  <footer class="site-footer">
+    <div class="frame footer-inner">
+      <p>Nasti <span class="footer-divider" aria-hidden="true">/</span> Maintained by <a href="https://github.com/xiaotwu">Tony</a></p>
+      <nav aria-label="Footer">
+        <a href="./privacy.html">Privacy policy</a>
+        <a href="./terms.html">Terms of use</a>
+        <a href="https://github.com/xiaotwu/Nasti/issues">Support</a>
+      </nav>
+    </div>
+  </footer>
+  <script src="./site.js" defer></script>
 </body>
 </html>

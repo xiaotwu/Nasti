@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Nasti 隐私政策">
+  <link rel="icon" href="../assets/nasti-icon.png">
+  <title>Nasti 隐私政策 · 娜斯提</title>
+  <script src="../theme.js"></script>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body class="docs">
+  <a class="skip" href="#main">跳至正文</a>
+  <header class="site-header">
+    <div class="frame masthead">
+      <a class="wordmark" href="./"><img src="../assets/nasti-icon.png" width="30" height="30" alt="">Nasti</a>
+      <button type="button" class="search-trigger" data-search-trigger hidden><span>搜索</span><kbd>⌘ K</kbd></button>
+      <nav class="top-nav" aria-label="主导航">
+        <a class="nav-home" href="./">首页</a>
+        <a class="nav-guide" href="./guide.html">指南</a>
+        <a class="nav-releases" href="https://github.com/xiaotwu/Nasti/releases">版本</a>
+        <button type="button" class="theme-toggle" data-theme-toggle aria-label="切换主题" hidden></button>
+        <a class="icon-link nav-github" href="https://github.com/xiaotwu/Nasti" aria-label="GitHub" title="GitHub"><svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38l-.01-1.49c-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.6 7.6 0 0 1 8 3.86c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48l-.01 2.2c0 .21.15.45.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
+        <a class="icon-link lang-toggle" href="../privacy.html" hreflang="en" lang="en" aria-label="Switch to English" title="English"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h11M8.5 3v3M5 8c1.2 3 3.3 5.4 6.6 7M12 6c-.9 4.5-3.7 8-8 10M13.2 21l4.3-10 4.3 10m-7.3-3h6"/></svg></a>
+      </nav>
+    </div>
+  </header>
+  <main class="frame docs-layout" id="main">
+    <aside class="docs-rail" aria-label="文档导航">
+      <nav>
+        <p class="rail-label">文档</p>
+        <a href="./guide.html">指南</a>
+        <p class="rail-label">项目政策</p>
+        <a href="./privacy.html" aria-current="page">隐私政策</a>
+        <a href="./terms.html">使用条款</a>
+      </nav>
+    </aside>
+    <article class="document" aria-labelledby="document-title">
+      <nav class="breadcrumb" aria-label="面包屑导航"><a href="./">Nasti</a><span aria-hidden="true">/</span><span>项目政策</span></nav>
+      <h1 id="document-title">Nasti 隐私政策</h1>
+      <p class="effective"><time datetime="2026-11-17">2026 年 11 月 17 日生效</time></p>
+      <details class="mobile-toc"><summary>本页目录</summary><ul><li><a href="#google-and-youtube-data">Google 和 YouTube 数据</a></li>
+<li><a href="#why-nasti-requests-access">Nasti 请求访问权限的原因</a></li>
+<li><a href="#storage-and-protection">存储和保护</a></li>
+<li><a href="#sharing-and-service-providers">数据共享与服务提供方</a></li>
+<li><a href="#delete-records-or-revoke-access">删除记录或撤销授权</a></li>
+<li><a href="#contact-and-policy-updates">联系方式与政策更新</a></li></ul></details>
+      <p>本政策说明你使用 Nasti macOS 应用或访问其 GitHub Pages 网站时，Nasti 如何处理信息。Nasti 由 <a href="https://github.com/xiaotwu">Tony（@xiaotwu）</a>维护。你无需连接 Google 账号，即可使用本地曲库、Internet Archive 授权目录和离线储藏库（Vault）。</p>
+<h2 id="google-and-youtube-data">Google 和 YouTube 数据</h2>
+<p>Nasti 的可选 YouTube Music 歌单面板使用 YouTube API 服务。连接账号前，你可以阅读本政策和 Nasti 使用条款。连接时，Nasti 在系统浏览器中打开 Google，由 Google 处理账号选择、登录和同意授权。你授权后，Google 将授权码返回到 Mac 上运行的 Nasti。Nasti 使用该授权码换取 OAuth 令牌。Nasti 不接收你的 Google 密码或浏览器会话 Cookie，也不请求你的 Google 电子邮箱地址或个人资料。</p>
+<p>Nasti 从 Google 和 YouTube 接收以下数据。</p>
+<ul>
+<li><strong>授权数据。</strong> Nasti 使用授权码和 OAuth 令牌，在你的授权范围内向 YouTube API 发出请求。</li>
+<li><strong>YouTube 频道标识符。</strong> Nasti 用它判断你可以编辑哪些歌单，并将本地保存的歌单副本与相应账号关联。</li>
+<li><strong>歌单信息。</strong> Nasti 使用标识符、标题、描述、可见性和归属信息列出和刷新歌单。调整曲序前会核对条目数量，更新歌单详情时会保留默认语言、播客状态等原有设置。</li>
+<li><strong>歌单条目。</strong> Nasti 使用条目和视频标识符、标题、创作者信息及曲序来显示歌单、在 YouTube Music 中打开曲目，或执行你选择的编辑操作。</li>
+</ul>
+<h2 id="why-nasti-requests-access">Nasti 请求访问权限的原因</h2>
+<p>YouTube API 要求拥有写入权限才能编辑歌单，因此 Nasti 请求 <code>youtube.force-ssl</code> OAuth 权限范围。Google 对此权限范围的描述涵盖更广。Nasti 使用该权限识别你的 YouTube 频道，读取和显示歌单，并执行你发起的歌单操作，包括创建歌单、编辑详情或可见性、添加或移除条目、调整曲序，以及删除歌单。YouTube 会对在 Nasti 中连接的账号应用这些更改。</p>
+<p>Nasti 对通过 Google API 获得的信息的使用遵守 <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API 服务用户数据政策</a>，包括其中的「有限使用」要求。Nasti 将这些数据用于本政策所述的歌单功能。Nasti 不出售 Google 用户数据，也不将其用于广告、用户画像、分析或 AI 训练。</p>
+<h2 id="storage-and-protection">存储和保护</h2>
+<p>Nasti 通过 HTTPS 向 Google 和 YouTube 发送请求。授权回调在你的 Mac 上完成，Nasti 使用 PKCE 保护授权码的交换过程。应用将短期访问令牌保存在内存中，并通过 macOS 钥匙串保存刷新令牌，以便你返回歌单面板时重新连接。</p>
+<p>导入歌单时，Nasti 会将歌单快照、关联的频道标识符和保存时间写入 Mac 上的 SQLite 曲库。快照连续 30 天未刷新后，Nasti 会在下次打开曲库或读取已保存的歌单记录时移除该快照。如果 Nasti 检测到 Google 授权已失效，会移除该账号的已保存快照，并尝试从钥匙串中删除失效令牌。</p>
+<p>Nasti 将本地曲库、Vault 中符合条件的录音副本以及应用偏好保存在你的 Mac 上。应用还会在本机记录你是否已同意适用于 YouTube Music 功能的本政策。</p>
+<h2 id="sharing-and-service-providers">数据共享与服务提供方</h2>
+<ul>
+<li><strong>Google 和 YouTube</strong> 直接接收来自你 Mac 的 OAuth 和歌单请求。在 YouTube Music 中打开曲目或歌单时，Nasti 将相关标识符交给系统浏览器，以打开对应页面。Google 和 YouTube 按照 <a href="https://policies.google.com/privacy">Google 隐私权政策</a>处理其服务产生的数据和浏览器 Cookie。</li>
+<li><strong>GitHub</strong> 托管本网站及应用发行文件。检查或下载更新时，应用会连接 GitHub。GitHub 按其<a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">隐私声明</a>处理对这些服务的请求。</li>
+<li><strong>Internet Archive</strong> 在你使用其目录时接收搜索查询、条目请求，以及下载或播放请求。请参阅 <a href="https://archive.org/about/terms.php">Internet Archive 使用条款与隐私政策</a>。</li>
+</ul>
+<p>Nasti 没有接收 Google 令牌或歌单快照的应用服务器，也不会将这些数据发送给 GitHub 或 Internet Archive。</p>
+<p>本网站在你的浏览器中保存所选主题。站内搜索在浏览器中运行，搜索词不会发送给 Nasti。Nasti 未在本网站添加广告或分析脚本。</p>
+<h2 id="delete-records-or-revoke-access">删除记录或撤销授权</h2>
+<ol>
+<li>如需删除一条本地歌单记录，在 YouTube Music 面板选择<strong>移除本地记录</strong>。该歌单仍保留在 YouTube 上。</li>
+<li>如需停止 Nasti 访问并移除已保存的账号数据，在面板的 Google 账号菜单中选择<strong>撤销授权</strong>。Nasti 会请求 Google 撤销授权，并在撤销成功时移除该账号的令牌和本地快照。</li>
+<li>你也可以在 <a href="https://security.google.com/settings/security/permissions">Google 账号安全设置</a>中撤销 Nasti 的访问权限。Nasti 会在下次检测到授权失效时清除关联的本地快照。</li>
+</ol>
+<p>如需从 YouTube 删除所选歌单，使用单独的<strong>删除在线歌单</strong>操作。移除 Vault 中的本地副本可释放 Mac 上的存储空间。</p>
+<h2 id="contact-and-policy-updates">联系方式与政策更新</h2>
+<p>如有疑问、投诉，或需要协助删除数据，请<a href="https://github.com/xiaotwu/Nasti/issues/new">通过 Nasti 问题跟踪页面联系 Tony</a>。GitHub Issues 中的报告会公开显示。请勿在报告中填写账号详情、私人歌单内容、密码、授权码或令牌。</p>
+<p>本政策版本以上方的生效日期为准。如果 Nasti 将 Google 用户数据用于新的目的，或需要访问更多 Google 用户数据，应用会在实施该变更前征求你对更新后政策的同意。</p>
+    </article>
+    <aside class="page-rail">
+      <nav aria-label="本页目录"><p class="rail-label">本页目录</p><ul><li><a href="#google-and-youtube-data">Google 和 YouTube 数据</a></li>
+<li><a href="#why-nasti-requests-access">Nasti 请求访问权限的原因</a></li>
+<li><a href="#storage-and-protection">存储和保护</a></li>
+<li><a href="#sharing-and-service-providers">数据共享与服务提供方</a></li>
+<li><a href="#delete-records-or-revoke-access">删除记录或撤销授权</a></li>
+<li><a href="#contact-and-policy-updates">联系方式与政策更新</a></li></ul></nav>
+    </aside>
+  </main>
+  <footer class="site-footer">
+    <div class="frame footer-inner">
+      <p>Nasti <span class="footer-divider" aria-hidden="true">/</span> Maintained by <a href="https://github.com/xiaotwu">Tony</a></p>
+      <nav aria-label="页脚">
+        <a href="./privacy.html" aria-current="page">隐私政策</a>
+        <a href="./terms.html">使用条款</a>
+        <a href="https://github.com/xiaotwu/Nasti/issues">支持</a>
+      </nav>
+    </div>
+  </footer>
+  <script src="../site.js" defer></script>
+</body>
+</html>
