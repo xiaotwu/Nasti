@@ -66,6 +66,8 @@ struct TokenReply {
 #[derive(Deserialize)]
 struct OAuthError {
     error: String,
+    #[serde(rename = "error_description")]
+    description: Option<String>,
 }
 
 impl YoutubeOAuth {
@@ -342,6 +344,14 @@ impl YoutubeOAuth {
         }
         let error = response.json::<OAuthError>().await.ok();
         match error.as_ref().map(|failure| failure.error.as_str()) {
+            Some("invalid_request")
+                if error
+                    .as_ref()
+                    .and_then(|failure| failure.description.as_deref())
+                    .is_some_and(|description| description.contains("client_secret")) =>
+            {
+                Err("此版本缺少 Google 应用客户端凭据，请联系发布者".into())
+            }
             Some("invalid_grant") if status == StatusCode::BAD_REQUEST => Ok(None),
             Some("invalid_client" | "unauthorized_client") => {
                 Err("请检查 Google 桌面 OAuth 客户端配置".into())
@@ -364,12 +374,15 @@ impl DesktopClient {
             None => match Self::read_file(default_path, false)? {
                 // Keep upgraded users on the client that owns their existing Keychain grant.
                 Some(client) => Ok(Some(client)),
-                None => Self::app_identity(option_env!("NASTI_APP_YOUTUBE_CLIENT_ID")),
+                None => Self::app_identity(
+                    option_env!("NASTI_APP_YOUTUBE_CLIENT_ID"),
+                    option_env!("NASTI_APP_YOUTUBE_CLIENT_SECRET"),
+                ),
             },
         }
     }
 
-    fn app_identity(id: Option<&str>) -> Result<Option<Self>, String> {
+    fn app_identity(id: Option<&str>, secret: Option<&str>) -> Result<Option<Self>, String> {
         let Some(id) = id.map(str::trim).filter(|id| !id.is_empty()) else {
             return Ok(None);
         };
@@ -384,9 +397,13 @@ impl DesktopClient {
         if !valid {
             return Err("此版本的 Google 登录配置无效，请联系发布者".into());
         }
+        let secret = secret
+            .map(str::trim)
+            .filter(|secret| !secret.is_empty())
+            .ok_or("此版本缺少 Google 应用客户端凭据，请联系发布者")?;
         Ok(Some(Self {
             id: id.to_owned(),
-            secret: None,
+            secret: Some(secret.to_owned()),
         }))
     }
 
@@ -796,19 +813,29 @@ mod tests {
     }
 
     #[test]
-    fn publisher_identity_is_a_public_id_without_a_secret() {
-        assert!(DesktopClient::app_identity(None).unwrap().is_none());
-        assert!(DesktopClient::app_identity(Some("  ")).unwrap().is_none());
-        assert!(DesktopClient::app_identity(Some("not-a-google-client")).is_err());
+    fn publisher_identity_requires_both_application_credentials() {
+        assert!(DesktopClient::app_identity(None, None).unwrap().is_none());
+        assert!(DesktopClient::app_identity(Some("  "), None)
+            .unwrap()
+            .is_none());
+        assert!(DesktopClient::app_identity(Some("not-a-google-client"), Some("fixture")).is_err());
+        assert!(DesktopClient::app_identity(
+            Some("https://example.apps.googleusercontent.com"),
+            Some("fixture")
+        )
+        .is_err());
         assert!(
-            DesktopClient::app_identity(Some("https://example.apps.googleusercontent.com"))
+            DesktopClient::app_identity(Some("12345-nasti.apps.googleusercontent.com"), None)
                 .is_err()
         );
-        let client = DesktopClient::app_identity(Some(" 12345-nasti.apps.googleusercontent.com "))
-            .unwrap()
-            .unwrap();
+        let client = DesktopClient::app_identity(
+            Some(" 12345-nasti.apps.googleusercontent.com "),
+            Some(" fixture-application-secret "),
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(client.id, "12345-nasti.apps.googleusercontent.com");
-        assert!(client.secret.is_none());
+        assert_eq!(client.secret.as_deref(), Some("fixture-application-secret"));
     }
 
     #[tokio::test]
@@ -863,7 +890,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn public_client_pkce_exchange_does_not_require_a_client_secret() {
+    async fn legacy_secretless_configuration_omits_secret_and_keeps_pkce() {
         let (mut oauth, google) = mock_google(vec![("200 OK", FIRST_GRANT)]).await;
         oauth.config.as_mut().unwrap().secret = None;
         let (result, _) = connect_in_mock_browser(&mut oauth, ("code", "public-client-code")).await;
@@ -871,6 +898,23 @@ mod tests {
         let requests = google.await.unwrap();
         assert!(!requests[0].form.contains_key("client_secret"));
         assert!(requests[0].form.contains_key("code_verifier"));
+    }
+
+    #[tokio::test]
+    async fn missing_app_credentials_do_not_save_a_grant() {
+        let (mut oauth, google) = mock_google(vec![(
+            "400 Bad Request",
+            r#"{"error":"invalid_request","error_description":"client_secret is missing."}"#,
+        )])
+        .await;
+        let (result, _) = connect_in_mock_browser(&mut oauth, ("code", "test-code")).await;
+        assert_eq!(
+            result.unwrap_err(),
+            "此版本缺少 Google 应用客户端凭据，请联系发布者"
+        );
+        assert!(!oauth.has_session());
+        assert!(oauth.access_token().await.unwrap().is_none());
+        assert_eq!(google.await.unwrap().len(), 1);
     }
 
     #[tokio::test]

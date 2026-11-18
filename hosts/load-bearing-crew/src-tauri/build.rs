@@ -1,6 +1,11 @@
 fn main() {
-    // The publisher supplies Nasti's public desktop client ID. Never embed a user's JSON/secret.
+    // Publisher-owned desktop application identity; never bundle a user's OAuth JSON or tokens.
     println!("cargo:rerun-if-env-changed=NASTI_APP_YOUTUBE_CLIENT_ID");
+    println!("cargo:rerun-if-env-changed=NASTI_APP_YOUTUBE_CLIENT_SECRET");
+    let configured = |name| std::env::var(name).is_ok_and(|value| !value.trim().is_empty());
+    if configured("NASTI_APP_YOUTUBE_CLIENT_ID") && !configured("NASTI_APP_YOUTUBE_CLIENT_SECRET") {
+        panic!("Nasti publisher builds require NASTI_APP_YOUTUBE_CLIENT_SECRET with the client ID");
+    }
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         for file in [
             "native/playback-outputs.h",

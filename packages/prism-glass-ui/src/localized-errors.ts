@@ -103,6 +103,7 @@ const messages = new Map<string, string>([
   ["已取消 Google 登录", "Google sign-in canceled."],
   ["此版本尚未启用 Google 登录", "Google sign-in is not available in this build."],
   ["此版本的 Google 登录配置无效，请联系发布者", "Google sign-in is misconfigured in this build. Contact the publisher."],
+  ["此版本缺少 Google 应用客户端凭据，请联系发布者", "Google application credentials are missing in this build. Contact the publisher."],
   ["无法打开本机授权回调", "The local authorization callback could not be opened."],
   ["无法读取本机授权回调地址", "The local authorization callback address could not be read."],
   ["Google 授权码已过期，请重新连接", "The Google authorization code has expired. Reconnect your account."],
