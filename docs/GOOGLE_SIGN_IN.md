@@ -21,17 +21,23 @@ NASTI_APP_YOUTUBE_CLIENT_SECRET='<Nasti application client secret>' pnpm build:m
 
 Google 当前桌面文档将 client_secret 标为可选，但 2026-11-17 对本次专用 Desktop 客户端的实际 token 请求返回 `invalid_request / client_secret is missing.`；提供应用 client_secret 后，测试无效码的响应推进为 `invalid_grant / Malformed auth code.`。因此发布构建要求 ID 和应用 secret 同时提供，缺失时构建失败。普通用户不承担这个配置步骤。
 
-桌面应用是公共客户端，分发的原生二进制不能保守应用 client_secret 的机密性，它不是账号访问授权；PKCE 和随机状态仍是必要保护。用户 refresh token 只在账号实际授权后保存到既有 Keychain 路径。缺少应用 ID 的源码构建仍可使用曲库与导入，Google 登录按钮禁用并显示「此版本尚未启用 Google 登录」。代码仓库不提供或借用第三方客户端身份。
+桌面应用是公共客户端，分发的原生二进制不能保守应用 client_secret 的机密性，它不是账号访问授权；PKCE 和随机状态仍是必要保护。用户令牌只在授权后的当前进程内使用。缺少应用 ID 的源码构建仍可使用曲库与导入，Google 登录按钮禁用并显示「此版本尚未启用 Google 登录」。代码仓库不提供或借用第三方客户端身份。
 
-为兼容已有安装，显式的运行时开发覆盖 `NASTI_YOUTUBE_CLIENT_ID` / `NASTI_YOUTUBE_CLIENT_FILE` 以及原数据目录中的既有客户端配置继续可读；既有本地配置优先于构建 ID，以保留其客户端对应的 Keychain 授权。普通界面不再提供 JSON 选取。不得把用户私人客户端文件恢复到公开包。
+为兼容已有安装，显式的运行时开发覆盖 `NASTI_YOUTUBE_CLIENT_ID` / `NASTI_YOUTUBE_CLIENT_FILE` 以及原数据目录中的既有客户端配置继续可读；既有本地客户端配置继续优先于内置客户端。普通界面不再提供 JSON 选取。不得把用户私人客户端文件恢复到公开包。
 
-macOS 的 refresh token 延续现有 Keychain 保存方式。使用 `NASTI_DATA_DIR` 的隔离验收不读写正式 Keychain 授权，授权仅在当前进程内保留。正式曲库、Vault 与更新信任根不随本次改动迁移。
+## 授权检查与本地清理
+
+访问令牌、刷新令牌、频道和歌单快照只保留在当前进程内。退出再打开应用后，需要重新连接并导入。当前进程大约每 15 分钟尝试刷新授权。Google 返回无效授权时清除本地数据。暂时无法确认时保留会话授权，超过一小时未验证即清除歌单数据。持续运行达到 24 小时时，歌单数据由周期检查或下次请求清除。休眠期间无法联网检查，恢复运行后按已过去的时间清理。
+
+在应用中选「撤销授权」会先清除歌单，并立即向 Google 发出撤权请求。暂时失败时，应用运行期间会重试。退出后可以在 [Google 账号权限](https://myaccount.google.com/permissions) 确认或移除访问。移除本地记录会保留 YouTube 上的歌单。删除在线歌单是独立操作。
+
+首次启动会清理 SQLite 主库和 WAL 中旧版 YouTube 快照，以及旧版 Nasti 专用 Keychain 服务的用户授权。本地曲库、Vault 和客户端配置继续可用。用户或系统另存的历史备份由其原管理工具控制。隔离验收用 `NASTI_DATA_DIR`，避免接触正式 Keychain 数据。
 
 ## 浏览器与取消
 
 Google 官方禁止把 OAuth 请求交给开发者可控制的嵌入式用户代理，包括可注入脚本或访问会话 cookie 的 WebView。因此本实现使用系统浏览器、随机状态、PKCE S256、随机本机 loopback 端口，并验证回调状态；不会伪装浏览器或提取 Google cookie。
 
-等待用户授权时可选择「取消登录」或按 Esc。离开面板也会取消等待，释放本机回调端口；重试创建新的状态与 PKCE。Google 已返回有效授权码时，完成交换与保存，界面显示实际连接结果，以免隐藏已经保存的授权。关闭浏览器页本身不会通知应用，用户可在应用取消或等待超时。
+等待用户授权时可选择「取消登录」或按 Esc。离开面板也会取消等待，释放本机回调端口；重试创建新的状态与 PKCE。Google 已返回有效授权码时，完成交换并显示实际连接结果。关闭浏览器页本身不会通知应用，用户可在应用取消或等待超时。
 
 ## 官方依据
 

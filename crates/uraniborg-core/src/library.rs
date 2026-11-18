@@ -9,7 +9,7 @@ use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -24,6 +24,10 @@ pub enum LibraryError {
     Catalog(#[from] CatalogError),
     #[error("曲库数据库操作失败：{0}")]
     Database(#[from] sqlx::Error),
+    #[error("YouTube 歌单超过会话快照容量")]
+    YoutubeSnapshotTooLarge,
+    #[error("无法清理旧版 YouTube 曲库记录，数据库正忙")]
+    YoutubeMigrationBusy,
     #[error("已保存的在线曲目信息无效：{0}")]
     Metadata(#[from] serde_json::Error),
     #[error("未知歌单。可导入内置歌单链接或 Internet Archive 专辑")]
@@ -41,6 +45,7 @@ pub enum LibraryError {
 pub struct Library {
     pool: SqlitePool,
     catalog: Arc<Catalog>,
+    youtube_snapshots: Mutex<youtube_store::YoutubeSnapshots>,
 }
 
 impl Library {
@@ -56,10 +61,14 @@ impl Library {
             .connect_with(options)
             .await?;
         sqlx::raw_sql(SCHEMA).execute(&pool).await?;
-        let library = Self { pool, catalog };
+        let library = Self {
+            pool,
+            catalog,
+            youtube_snapshots: Mutex::default(),
+        };
+        library.scrub_legacy_youtube_snapshots().await?;
         library.migrate_source_entries().await?;
         library.seed().await?;
-        library.prune_youtube_playlists().await?;
         Ok(library)
     }
 

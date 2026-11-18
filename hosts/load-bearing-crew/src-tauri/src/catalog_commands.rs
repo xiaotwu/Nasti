@@ -93,13 +93,18 @@ pub(crate) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
         let pipe = MediaPipe::start(sources, Arc::clone(&vault)).await?;
         Ok::<_, Box<dyn std::error::Error>>((library, pipe))
     })?;
-    app.manage(crate::youtube_commands::YoutubeService(
+    let youtube = if isolated_data.is_none() {
+        crate::youtube_oauth::remove_legacy_keychain_grants()
+    } else {
+        Ok(())
+    }
+    .and_then(|()| {
         crate::youtube_commands::YoutubeServices::new(
-            isolated_data.is_none(),
             &data.join("youtube-oauth-client.json"),
             &runtime.oauth_dir,
-        ),
-    ));
+        )
+    });
+    app.manage(crate::youtube_commands::YoutubeService(youtube));
     app.manage(runtime);
     app.manage(MediaServices {
         catalog,
@@ -110,6 +115,7 @@ pub(crate) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
         pipe,
         _data_lock: data_lock,
     });
+    crate::youtube_commands::start_session_checks(app.handle().clone());
     Ok(())
 }
 

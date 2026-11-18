@@ -14,7 +14,7 @@ type Announcement = "pending" | "success" | "error";
 type DataReply = Exclude<YoutubeReply, { kind: "done" }>;
 type ReplyValue<K extends DataReply["kind"]> = Extract<DataReply, { kind: K }>["value"];
 type Confirmation = { request: YoutubeRequest; caption: string; trigger: HTMLButtonElement };
-const policyKey = "nasti.youtube-policy.2026-11-17";
+const policyKey = "nasti.youtube-policy.session";
 
 function hasAcceptedPolicy(): boolean {
   try { return localStorage.getItem(policyKey) === "accepted"; }
@@ -46,19 +46,37 @@ export class YoutubePanel {
   private adding = false;
   private nextFocus: HTMLElement | null = null;
   private connecting = false;
+  private revoking = false;
+  private dataRevision = 0;
+  private readonly dataListener: Promise<void>;
   private policyAccepted = hasAcceptedPolicy();
 
   constructor(
     private readonly invoke: (request: YoutubeRequest) => Promise<YoutubeReply>,
     signal: AbortSignal,
+    onDataCleared?: (clear: () => void) => Promise<() => void>,
   ) {
+    this.dataListener = onDataCleared?.(() => {
+      if (this.revoking) return;
+      this.clearData();
+      this.account = null;
+      this.retry.hidden = false;
+      this.renderAccount();
+      this.announce(t("会话歌单记录已清除。重新读取以检查连接。", "Session playlist data cleared. Reload to check the connection."), "success");
+    }).then(unlisten => {
+      if (signal.aborted) unlisten();
+      else signal.addEventListener("abort", unlisten, { once: true });
+    }) ?? Promise.resolve();
+    // Observe the rejection even before the panel is first opened.
+    void this.dataListener.catch(() => {});
+
     this.root.addEventListener("click", event => {
       if (!(event.target instanceof Element)) return;
       const link = event.target.closest<HTMLAnchorElement>("a[data-youtube-policy-page]");
       if (link) {
         event.preventDefault();
         const page = link.dataset.youtubePolicyPage;
-        if (page === "privacy" || page === "nastiTerms" || page === "youtubeTerms") {
+        if (page === "privacy" || page === "nastiTerms" || page === "youtubeTerms" || page === "googlePermissions") {
           void this.complete({ action: "openPolicy", page }).catch(error => {
             this.announce(localizeError(error, "无法打开文档", "Could not open the document"), "error");
           });
@@ -111,15 +129,9 @@ export class YoutubePanel {
       return;
     }
     await this.run(async () => {
+      await this.dataListener;
       const status = await this.request({ action: "status" }, "status");
-      if (this.account?.connected && !status.connected) {
-        this.selected = null;
-        this.editing = this.confirmation = null;
-        this.source = "imported";
-        this.playlists = [];
-        this.renderList();
-        this.renderView();
-      }
+      if (this.account?.connected && !status.connected) this.clearData();
       this.account = status;
       this.retry.hidden = true;
       await this.loadList(this.account.connected ? this.source : "imported");
@@ -166,6 +178,31 @@ export class YoutubePanel {
     return false;
   }
 
+  private clearData(): void {
+    this.dataRevision++;
+    this.selected = null;
+    this.editing = this.confirmation = null;
+    this.adding = false;
+    this.nextFocus = null;
+    this.source = "imported";
+    this.playlists = [];
+    this.input.value = "";
+    for (const id of ["youtube-song", "youtube-name", "youtube-note"]) {
+      element<HTMLInputElement | HTMLTextAreaElement>(id).value = "";
+    }
+    const title = element("youtube-title");
+    title.title = "";
+    setText(title, "");
+    setText(element("youtube-description"), "");
+    const snapshot = element("youtube-snapshot");
+    snapshot.title = "";
+    setText(snapshot, "");
+    element("youtube-tracks").replaceChildren();
+    this.setMenu(null);
+    this.renderList();
+    this.renderView();
+  }
+
   private setMenu(menu: Disclosure | null): void {
     if (menu === this.menu) return;
     this.menu = menu;
@@ -183,7 +220,11 @@ export class YoutubePanel {
   private async request<K extends DataReply["kind"]>(
     request: YoutubeRequest, kind: K,
   ): Promise<ReplyValue<K>> {
+    const revision = this.dataRevision;
     const reply = await this.invoke(request);
+    if (revision !== this.dataRevision) {
+      throw new Error(t("会话已更新，请重新读取歌单", "The session changed. Reload playlists."));
+    }
     if (reply.kind !== kind || !("value" in reply)) throw new Error(t("YouTube Music 返回了意外的结果", "YouTube Music returned an unexpected response"));
     return reply.value as ReplyValue<K>;
   }
@@ -197,6 +238,7 @@ export class YoutubePanel {
     failure: readonly [string, string] = ["YouTube Music 操作失败", "The YouTube Music operation failed"],
   ): Promise<boolean> {
     if (this.controls.disabled) return false;
+    const revision = this.dataRevision;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.controls.disabled = true;
     this.controls.setAttribute("aria-busy", "true");
@@ -206,7 +248,7 @@ export class YoutubePanel {
       this.announce(success, "success");
       return true;
     } catch (error) {
-      this.announce(localizeError(error, ...failure), "error");
+      if (revision === this.dataRevision) this.announce(localizeError(error, ...failure), "error");
       return false;
     } finally {
       this.controls.disabled = false;
@@ -247,7 +289,7 @@ export class YoutubePanel {
       case "retry": void this.show(); return;
       case "connect": void this.connectAccount(); return;
       case "disconnect": this.askConfirmation(
-        { action }, t("撤销授权并移除这个账号的本地歌单记录？", "Revoke access and remove this account’s local playlist records?"), trigger,
+        { action }, t("撤销 Google 授权并清除本次会话的歌单记录？YouTube 上的歌单会保留。", "Revoke Google access and clear playlist data for this session? Your playlists will remain on YouTube."), trigger,
       ); return;
       case "imported": case "mine":
         if (action === "imported" || this.account?.connected) void this.run(() => this.loadList(action), t("正在读取歌单", "Loading playlists…"));
@@ -355,7 +397,7 @@ export class YoutubePanel {
       this.replaceSummary(playlist);
       this.showPlaylist(playlist);
       this.nextFocus = element("youtube-title");
-    }, t("正在同步歌单", "Syncing playlist…"), t("已保存到 Nasti", "Saved to Nasti"));
+    }, t("正在同步歌单", "Syncing playlist…"), t("已导入本次会话", "Imported for this session"));
   }
 
   private async changePlaylist(request: YoutubeRequest, caption: string, move?: HTMLButtonElement): Promise<boolean> {
@@ -421,15 +463,26 @@ export class YoutubePanel {
     const pending = this.confirmation;
     if (!pending) return;
     const request = pending.request;
-    const finished = await this.run(async () => {
-      switch (request.action) {
-        case "disconnect":
+    if (request.action === "disconnect") {
+      this.revoking = true;
+      this.clearData();
+      if (this.account) this.account = { ...this.account, connected: false };
+      this.renderAccount();
+      try {
+        await this.run(async () => {
           this.account = await this.request(request, "status");
-          this.selected = null;
-          this.playlists = [];
-          this.source = "imported";
           this.renderAccount();
-          break;
+        }, t("正在撤销 Google 授权", "Revoking Google access…"), t("已撤销授权", "Access revoked"), [
+          "本地记录已清除。Nasti 运行时会重试撤权。你也可以在 Google 账号权限中完成撤权。",
+          "Local data cleared. Nasti will retry while running. You can also revoke access in Google account permissions.",
+        ]);
+      } finally {
+        this.revoking = false;
+      }
+      return;
+    }
+    await this.run(async () => {
+      switch (request.action) {
         case "remove":
           this.showPlaylist(await this.request(request, "playlist"));
           break;
@@ -445,9 +498,6 @@ export class YoutubePanel {
       this.renderView();
       this.nextFocus = this.selected ? element("youtube-title") : this.control(this.source);
     }, t("正在提交操作", "Applying changes…"), t("操作已完成", "Changes applied"));
-    if (finished && request.action === "disconnect") {
-      await this.run(() => this.loadList("imported"), t("正在读取歌单", "Loading playlists…"), t("已撤销授权", "Access revoked"));
-    }
   }
 
   private showPlaylist(playlist: YoutubePlaylist): void {
@@ -582,7 +632,7 @@ export class YoutubePanel {
     const help = element("youtube-signin-help");
     help.hidden = !status || status.connected || Boolean(this.selected || this.confirmation || this.editing);
     setText(help, status?.canConnect
-      ? t("将在系统浏览器中授权，完成后返回 Nasti。", "Your system browser will open for authorization. Return to Nasti when finished.")
+      ? t("请在系统浏览器中授权后返回 Nasti。登录和导入仅用于本次会话。", "Authorize in your browser, then return to Nasti. Sign-in and imports last for this session.")
       : t("此版本尚未启用 Google 登录。", "Google sign-in is not available in this build."));
   }
 

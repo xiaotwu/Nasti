@@ -368,6 +368,7 @@ pub enum YoutubePolicyPage {
     Privacy,
     NastiTerms,
     YoutubeTerms,
+    GooglePermissions,
 }
 
 #[derive(Deserialize)]

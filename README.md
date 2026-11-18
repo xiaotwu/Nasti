@@ -7,7 +7,9 @@ Nasti 是基于 Tauri、Rust 和 Three.js 的 macOS 音乐播放器，支持 App
 ## Library and account / 曲库与账号
 
 - **Licensed catalog / 授权曲库** — use the top search control to select the licensed catalog, search, preview and import tracks. You can also paste a supported Internet Archive release link into Import Playlist. 从顶栏检索入口选择授权曲库，搜索、预览并导入曲目。也可在「导入歌单」粘贴受支持的 Internet Archive 专辑链接。
-- **YouTube Music** — open Import Playlist → YouTube Music → Sign in with Google. Authorization opens in the system browser and returns to Nasti; no client JSON selection is required. If this build has no publisher-provided app identity, sign-in is unavailable. 从顶栏「导入歌单」进入 YouTube Music，选择「使用 Google 登录」，在系统浏览器授权后返回 Nasti。无需选择客户端 JSON；未配置应用身份的构建会显示登录尚未启用。播放会打开 YouTube Music，导入及管理在 Nasti 内完成。
+- **YouTube Music** — open Import Playlist → YouTube Music → Sign in with Google. Authorization opens in the system browser and returns to Nasti; no client JSON selection is required. Sign-in and imported snapshots last for the current app session. If this build has no publisher-provided app identity, sign-in is unavailable. 从顶栏「导入歌单」进入 YouTube Music，选择「使用 Google 登录」，在系统浏览器授权后返回 Nasti。无需选择客户端 JSON；未配置应用身份的构建会显示登录尚未启用。播放会打开 YouTube Music，导入及管理在 Nasti 内完成。退出应用后，下次使用时需重新连接并导入。
+
+[Website / 官网](https://xiaotwu.github.io/Nasti/) · [Privacy / 隐私](https://xiaotwu.github.io/Nasti/privacy.html) · [Terms / 使用条款](https://xiaotwu.github.io/Nasti/terms.html)
 
 [Releases / 下载](https://github.com/xiaotwu/Nasti/releases) · [Roadmap / 看板](https://github.com/users/xiaotwu/projects/5/views/2) · [Issues / 问题](https://github.com/xiaotwu/Nasti/issues)
 
