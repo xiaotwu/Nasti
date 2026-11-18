@@ -2,6 +2,10 @@
 
 普通用户从「导入歌单 → YouTube Music → 使用 Google 登录」授权，无需下载或选择 OAuth JSON。首页保留档案视觉，检索与导入使用顶栏常规入口。
 
+首次打开 YouTube Music 面板时，先阅读并同意 Nasti 的隐私政策与条款。应用记录本次同意，之后在面板中保留文档链接。三份公开页面由仓库的 `gh-pages` 分支发布。
+
+[Nasti 官网](https://xiaotwu.github.io/Nasti/) · [隐私政策](https://xiaotwu.github.io/Nasti/privacy.html) · [使用条款](https://xiaotwu.github.io/Nasti/terms.html)
+
 ## 应用身份与账号授权
 
 发布者必须在属于 Nasti 的 Google Cloud 项目中启用 YouTube Data API v3，注册 Desktop app OAuth 客户端，配置应用品牌、同意页面及请求的歌单权限。公开发行前，按 Google 对生产应用和敏感权限的要求完成相应审核。这是应用身份的前置条件，与用户随后选择账号、同意权限是两件事。

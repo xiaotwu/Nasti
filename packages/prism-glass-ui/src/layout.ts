@@ -287,6 +287,15 @@ export function mountLayout(root: HTMLElement): void {
                   </div>
                 </div>
               </div>
+              <div id="youtube-policy" class="youtube-policy">
+                <p id="youtube-policy-summary">${t("Nasti 通过 YouTube API 访问你授权的歌单，并在本机保存你导入的歌单记录。", "Nasti uses YouTube API Services to access the playlists you authorize and saves imported playlist snapshots on this Mac.")}</p>
+                <nav aria-label="${t("YouTube Music 隐私与条款", "YouTube Music privacy and terms")}">
+                  <a href="https://xiaotwu.github.io/Nasti/privacy.html" target="_blank" rel="noopener noreferrer">${t("隐私政策", "Privacy policy")}</a>
+                  <a href="https://xiaotwu.github.io/Nasti/terms.html" target="_blank" rel="noopener noreferrer">${t("Nasti 使用条款", "Nasti terms of use")}</a>
+                  <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer">${t("YouTube 服务条款", "YouTube Terms of Service")}</a>
+                </nav>
+                <button type="button" class="text-button" data-youtube-action="accept-policy" aria-describedby="youtube-policy-summary">${t("同意隐私政策及条款并继续", "Agree to privacy policy and terms")}</button>
+              </div>
               <p id="youtube-signin-help" class="youtube-signin-help" tabindex="-1" hidden></p>
               <form id="youtube-import" class="import-form">
                 <label class="search-input">${icon("link")}<input id="youtube-reference" autocomplete="off" placeholder="${t("歌单链接或编号", "Playlist link or ID")}" aria-label="${t("YouTube Music 歌单链接或编号", "YouTube Music playlist link or ID")}" required></label>

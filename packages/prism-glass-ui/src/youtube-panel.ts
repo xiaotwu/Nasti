@@ -14,6 +14,13 @@ type Announcement = "pending" | "success" | "error";
 type DataReply = Exclude<YoutubeReply, { kind: "done" }>;
 type ReplyValue<K extends DataReply["kind"]> = Extract<DataReply, { kind: K }>["value"];
 type Confirmation = { request: YoutubeRequest; caption: string; trigger: HTMLButtonElement };
+const policyKey = "nasti.youtube-policy.2026-11-17";
+
+function hasAcceptedPolicy(): boolean {
+  try { return localStorage.getItem(policyKey) === "accepted"; }
+  catch { return false; }
+}
+
 const privacyLabels: Record<YoutubePrivacy, readonly [string, string]> = {
   private: ["私密", "Private"], public: ["公开", "Public"], unlisted: ["不公开", "Unlisted"],
 };
@@ -26,6 +33,7 @@ export class YoutubePanel {
   private readonly importForm = element<HTMLFormElement>("youtube-import");
   private readonly input = element<HTMLInputElement>("youtube-reference");
   private readonly connect = this.control("connect");
+  private readonly acceptPolicy = this.control("accept-policy");
   private readonly cancelConnect = element<HTMLButtonElement>("youtube-cancel-connect");
   private readonly retry = this.control("retry");
   private account: YoutubeStatus | null = null;
@@ -38,6 +46,7 @@ export class YoutubePanel {
   private adding = false;
   private nextFocus: HTMLElement | null = null;
   private connecting = false;
+  private policyAccepted = hasAcceptedPolicy();
 
   constructor(
     private readonly invoke: (request: YoutubeRequest) => Promise<YoutubeReply>,
@@ -86,6 +95,10 @@ export class YoutubePanel {
     }
     if (this.controls.disabled) return;
     this.renderView();
+    if (!this.policyAccepted) {
+      this.focus(this.acceptPolicy);
+      return;
+    }
     await this.run(async () => {
       const status = await this.request({ action: "status" }, "status");
       if (this.account?.connected && !status.connected) {
@@ -215,6 +228,11 @@ export class YoutubePanel {
     const trigger = this.menu && button.closest(".youtube-menu") ? this.control(this.menu + "-menu") : button;
     this.setMenu(null);
     switch (action) {
+      case "accept-policy":
+        this.policyAccepted = true;
+        try { localStorage.setItem(policyKey, "accepted"); } catch { /* Keep consent for this window. */ }
+        void this.show();
+        return;
       case "retry": void this.show(); return;
       case "connect": void this.connectAccount(); return;
       case "disconnect": this.askConfirmation(
@@ -560,13 +578,16 @@ export class YoutubePanel {
   private renderView(): void {
     const overlay = Boolean(this.confirmation || this.editing);
     element("youtube-navigation").hidden = Boolean(this.selected) || overlay;
+    const policy = element("youtube-policy");
+    policy.dataset.accepted = String(this.policyAccepted);
+    this.acceptPolicy.hidden = this.policyAccepted;
     this.renderSignin();
     const add = this.control("add-song");
     const adding = this.adding && !add.hidden && Boolean(this.selected) && !overlay;
     element("youtube-add").hidden = !adding;
     add.setAttribute("aria-expanded", String(adding));
-    this.importForm.hidden = Boolean(this.selected) || overlay;
-    element("youtube-list-view").hidden = Boolean(this.selected) || overlay;
+    this.importForm.hidden = !this.policyAccepted || Boolean(this.selected) || overlay;
+    element("youtube-list-view").hidden = !this.policyAccepted || Boolean(this.selected) || overlay;
     element("youtube-detail").hidden = !this.selected || overlay;
     element("youtube-edit").hidden = !this.editing || Boolean(this.confirmation);
     element("youtube-confirm").hidden = !this.confirmation;
