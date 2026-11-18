@@ -45,9 +45,9 @@
 <li><a href="#sharing-and-service-providers">数据共享与服务提供方</a></li>
 <li><a href="#delete-records-or-revoke-access">删除记录或撤销授权</a></li>
 <li><a href="#contact-and-policy-updates">联系方式与政策更新</a></li></ul></details>
-      <p>本政策说明你使用 Nasti macOS 应用或访问其 GitHub Pages 网站时，Nasti 如何处理信息。Nasti 由 <a href="https://github.com/xiaotwu">Tony（@xiaotwu）</a>维护。你无需连接 Google 账号，即可使用本地曲库、Internet Archive 授权目录和离线储藏库（Vault）。</p>
+      <p>本政策说明你使用 Nasti macOS 应用或访问其 GitHub Pages 网站时，Nasti 如何处理信息。Nasti 由 <a href="https://github.com/xiaotwu">Tony（@xiaotwu）</a>维护。公开搜索及管理 Vault 副本无需连接 Google 账号。</p>
 <h2 id="google-and-youtube-data">Google 和 YouTube 数据</h2>
-<p>Nasti 的可选 YouTube Music 歌单面板使用 YouTube API 服务。在启用 Google 登录的版本中，面板会请你阅读并同意本政策与 <a href="./terms.html">Nasti 使用条款</a>，然后才会向 YouTube API 发送请求。接下来，你可在系统浏览器打开的 Google 同意页面单独决定是否授权 Nasti。如果拒绝，本地曲库、授权目录和离线储藏库仍可使用。</p>
+<p>Nasti 使用 YouTube API 服务管理 YouTube Music 歌单。账号卡片提供本政策和<a href="./terms.html">使用条款</a>入口。你可在系统浏览器的 Google 同意页面授权 Nasti。公开曲目搜索无需登录。</p>
 <p>你授权后，Google 会将短期有效的授权码返回到你的 Mac。Nasti 仅用它换取一次 OAuth 令牌。Nasti 不请求你的 Google 邮箱或个人资料，也不会接收 Google 密码或访问浏览器中的 Google 会话 Cookie。</p>
 <p>Nasti 从 Google 和 YouTube 接收以下数据。</p>
 <ul>
@@ -63,23 +63,23 @@
 <p>Nasti 通过 HTTPS 向 Google 和 YouTube 发送请求。授权回调在你的 Mac 上完成，Nasti 使用 PKCE 保护令牌交换。</p>
 <ul>
 <li><strong>授权码。</strong> 只用于交换令牌，不保存到本地曲库。</li>
-<li><strong>访问令牌和刷新令牌。</strong> Nasti 0.1.2 将两个令牌保存在应用内存中。应用运行时会定期核验授权。Google 报告授权失效时，应用会清除会话数据。如果一小时内无法确认授权，应用会清除歌单数据，并可在运行期间尝试恢复连接。</li>
-<li><strong>歌单快照。</strong> Nasti 0.1.2 仅在当前会话的内存中保留导入的歌单、条目、频道标识符和导入时间。退出应用时会释放这些记录。应用持续运行时，达到 24 小时的保留阈值后会清理歌单记录。导入不会下载 YouTube 录音。旧版曾将令牌存入 macOS 钥匙串，将快照存入 SQLite 曲库。新版首次启动会从这些位置清理 Nasti 的旧记录。你或备份服务另外保存的副本由原渠道管理。</li>
+<li><strong>访问令牌和刷新令牌。</strong>Nasti 0.1.3 将访问令牌保留在内存中，将刷新令牌和频道 ID 保存到本机受保护文件，供重启恢复连接。macOS 也会尝试将刷新令牌写入钥匙串。Nasti 0.1.2 的两个令牌均保留在内存中。</li>
+<li><strong>歌单快照。</strong>Nasti 0.1.3 将歌单元数据和入列 ID 保存到本机 SQLite。同步会刷新快照，临时网络或令牌刷新错误会保留有效期内的上一次快照。快照须在 30 天内刷新，过期记录由应用清理。0.1.2 的快照仅保留在当前会话。选择歌单时只载入歌单资料，只有主动请求保存时才写入 Vault 离线副本。</li>
 </ul>
-<p>Nasti 将本地曲库、Vault 中符合条件的录音副本以及应用偏好保存在你的 Mac 上。应用还会在本机记录你是否已同意适用于 YouTube Music 功能的本政策。</p>
+<p>偏好和 Vault 副本保留在你的 Mac 本机。Nasti 使用本地安装的 yt-dlp 发送公开搜索和媒体请求。</p>
 <h2 id="sharing-and-service-providers">数据共享与服务提供方</h2>
 <ul>
 <li><strong>Google 和 YouTube</strong> 直接接收来自你 Mac 的 OAuth 和歌单请求。在 YouTube Music 中打开曲目或歌单时，Nasti 将相关标识符交给系统浏览器，以打开对应页面。Google 和 YouTube 按照 <a href="https://policies.google.com/privacy">Google 隐私权政策</a>处理其服务产生的数据和浏览器 Cookie。</li>
 <li><strong>GitHub</strong> 托管本网站及应用发行文件。检查或下载更新时，应用会连接 GitHub。GitHub 按其<a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">隐私声明</a>处理对这些服务的请求。</li>
 <li><strong>Internet Archive</strong> 在你使用其目录时接收搜索查询、条目请求，以及下载或播放请求。请参阅 <a href="https://archive.org/about/terms.php">Internet Archive 使用条款与隐私政策</a>。</li>
 </ul>
-<p>Nasti 没有接收 Google 令牌或歌单快照的应用服务器。授权数据和执行所选操作所需的歌单数据由应用直接发送给 Google 和 YouTube。打开 YouTube Music 链接时，应用把对应的歌单或视频标识符交给浏览器。Nasti 不会将 Google 用户数据发送给 GitHub、Internet Archive、广告或分析服务提供方。</p>
+<p>Nasti 没有接收 Google 令牌或歌单快照的应用服务器。授权、歌单、公开搜索与媒体请求从你的 Mac 直接发送给 Google 和 YouTube。GitHub 用于项目网站和应用更新。</p>
 <p>本网站在你的浏览器中保存所选主题。站内搜索在浏览器中运行，搜索词不会发送给 Nasti。Nasti 未在本网站添加广告或分析脚本。</p>
 <h2 id="delete-records-or-revoke-access">删除记录或撤销授权</h2>
 <ol>
-<li>如需删除一条本地歌单记录，在 YouTube Music 面板选择<strong>移除本地记录</strong>。该歌单仍保留在 YouTube 上。</li>
-<li>如需停止 Nasti 访问并清除会话歌单数据，请在面板的 Google 账号菜单中选择<strong>撤销授权</strong>。Nasti 会清除本地歌单数据并立即向 Google 发出撤权请求。若请求失败，应用会在运行期间重试。</li>
-<li>你可以通过 <a href="https://security.google.com/settings/security/permissions">Google 账号安全设置</a>撤销或确认访问权限，退出 Nasti 后也可以操作。退出应用会释放会话数据，Google 账号内的授权仍由你管理。</li>
+<li>在曲库总览选择<strong>取消订阅</strong>可移除本机订阅，YouTube 上的原歌单保留。</li>
+<li>在账号菜单选择<strong>断开连接</strong>可撤销访问。Google 确认后，Nasti 会清除本机账号会话及该账号的歌单快照。公开订阅与 Vault 副本可分别移除。</li>
+<li>也可以在<a href="https://myaccount.google.com/permissions">Google 账号权限</a>查看或撤销授权。</li>
 </ol>
 <p>如需从 YouTube 删除所选歌单，使用单独的<strong>删除在线歌单</strong>操作。移除 Vault 中的本地副本可释放 Mac 上的存储空间。</p>
 <h2 id="contact-and-policy-updates">联系方式与政策更新</h2>
